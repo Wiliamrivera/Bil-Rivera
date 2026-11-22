@@ -62,12 +62,15 @@ export default defineConfig(() => {
               urlPattern: ({ sameOrigin, url, request }) =>
                 sameOrigin &&
                 request.method === 'GET' &&
+                request.mode !== 'navigate' &&
+                !url.pathname.endsWith('.html') &&
+                !url.pathname.endsWith('.webmanifest') &&
                 !url.pathname.endsWith('/sw.js') &&
                 !url.pathname.endsWith('/dev-sw.js') &&
                 !url.pathname.includes('workbox-'),
               handler: 'StaleWhileRevalidate',
               options: {
-                cacheName: 'rivera-app-runtime-v39',
+                cacheName: 'rivera-app-runtime-v40',
                 expiration: {
                   maxEntries: 250,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
@@ -111,6 +114,10 @@ export default defineConfig(() => {
     },
     build: {
       rolldownOptions: {
+        input: {
+          main: path.resolve(import.meta.dirname, 'index.html'),
+          site: path.resolve(import.meta.dirname, 'site.html'),
+        },
         output: {
           codeSplitting: {
             groups: [

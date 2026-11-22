@@ -8,6 +8,7 @@ import {
   Download,
   FolderOpen,
   Gauge,
+  Globe,
   Home,
   Loader2,
   Minus,
@@ -40,6 +41,7 @@ import {
 import { PlaylistSelectorDropdown } from './components/PlaylistSelectorDropdown';
 import { PlaylistTrackDropdown } from './components/PlaylistTrackDropdown';
 import { PlaylistTracksView } from './components/PlaylistTracksView';
+import { PromoWebsiteView } from './components/PromoWebsiteView';
 import { AndroidDirectInstallerSheet, OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import { SetlistsView } from './components/SetlistsView';
 import { SettingsView } from './components/SettingsView';
@@ -80,6 +82,7 @@ import {
   decodeAudioDataSafe,
   isAndroidDevice,
   isHandheldOrTablet,
+  isRunningInsideNativeShell,
 } from './utils/platform';
 
 const EMPTY_SECTIONS: SongSection[] = [];
@@ -91,8 +94,43 @@ const PALETTE_META_THEME_COLORS: Record<AppColorPalette, { dark: string; light: 
   cobalt: { dark: '#0B0F17', light: '#F2F5FA' },
 };
 
-type AppTab = 'studio' | 'setlists' | 'settings' | 'playlistTracks';
+type AppTab = 'studio' | 'setlists' | 'settings' | 'playlistTracks' | 'promo';
 const TAB_ORDER: Array<'studio' | 'setlists' | 'settings'> = ['studio', 'setlists', 'settings'];
+
+function hasPromoRouteFlag(): boolean {
+  if (typeof window === 'undefined' || isRunningInsideNativeShell()) return false;
+  try {
+    return (
+      new URLSearchParams(window.location.search).get('site') === '1' ||
+      window.location.hash === '#site' ||
+      window.location.pathname === '/site'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clearPromoRouteFlag(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const url = new URL(window.location.href);
+    let changed = false;
+    if (url.searchParams.has('site')) {
+      url.searchParams.delete('site');
+      changed = true;
+    }
+    if (url.hash === '#site') {
+      url.hash = '';
+      changed = true;
+    }
+    if (changed) {
+      const next = `${url.pathname}${url.search}${url.hash}` || '/';
+      window.history.replaceState(window.history.state, '', next);
+    }
+  } catch {
+    // ignore history errors
+  }
+}
 
 function readAudioDurationFast(file: File, timeoutMs = 1000): Promise<number> {
   return new Promise((resolve) => {
@@ -332,7 +370,7 @@ export default function App() {
     }
   }, [activePalette, activeTheme]);
 
-  const [activeTab, setActiveTab] = useState<AppTab>('studio');
+  const [activeTab, setActiveTab] = useState<AppTab>(() => (hasPromoRouteFlag() ? 'promo' : 'studio'));
   const [isImporting, setIsImporting] = useState(false);
   const [importStatus, setImportStatus] = useState<{
     current: number;
@@ -508,6 +546,8 @@ export default function App() {
   const isMobileClient = useMemo(() => isHandheldOrTablet(), []);
 
   const isAndroidClient = useMemo(() => isAndroidDevice(), []);
+
+  const isNativeShell = useMemo(() => isRunningInsideNativeShell(), []);
 
   useEffect(() => {
     const splash = document.getElementById('rivera-boot-splash');
@@ -1060,6 +1100,13 @@ export default function App() {
     onAutoAdvancedTrack: handleAutoAdvancedTrack,
     onTrackEnded: handleTrackEnded,
   });
+
+  const pauseAudioOnPromo = audio.pause;
+  useEffect(() => {
+    if (activeTab === 'promo' && audio.isPlaying) {
+      pauseAudioOnPromo();
+    }
+  }, [activeTab, audio.isPlaying, pauseAudioOnPromo]);
 
   const activeTrackDuration = activeTrack?.duration;
   useEffect(() => {
@@ -2154,7 +2201,7 @@ export default function App() {
 
     if (dt < 650 && Math.abs(dx) >= 56 && Math.abs(dx) > Math.abs(dy) * 1.6) {
       const curr = activeTabRef.current;
-      if (curr === 'playlistTracks') return;
+      if (curr === 'playlistTracks' || curr === 'promo') return;
       const idx = TAB_ORDER.indexOf(curr);
       if (dx < 0 && idx >= 0 && idx < TAB_ORDER.length - 1) {
         navigateToTab(TAB_ORDER[idx + 1]);
@@ -2171,6 +2218,19 @@ export default function App() {
 
   const stageBtnH = 'min-h-[42px]';
   const stageTransportH = 'min-h-[54px]';
+
+  if (activeTab === 'promo' && !isNativeShell) {
+    return (
+      <PromoWebsiteView
+        language={settings.language}
+        onChangeLanguage={(lang) => handleSettingsUpdate({ language: lang })}
+        onOpenPlayer={() => {
+          clearPromoRouteFlag();
+          navigateToTab('studio');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] w-full flex flex-col bg-[var(--surface-base)] text-slate-900 dark:text-zinc-100">
@@ -2260,6 +2320,16 @@ export default function App() {
                 </button>
               );
             })}
+            {!isNativeShell && (
+              <button
+                onClick={() => navigateToTab('promo')}
+                aria-label={t.tabs.promo}
+                title={t.tabs.promo}
+                className="min-h-[34px] min-w-[44px] py-1.5 px-3 text-xs sm:text-sm font-medium whitespace-nowrap shrink-0 border-b-2 border-transparent text-slate-500 dark:text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer flex items-center justify-center"
+              >
+                <Globe className="w-[19px] h-[19px] shrink-0" />
+              </button>
+            )}
           </nav>
         </div>
       </header>
@@ -2880,6 +2950,7 @@ export default function App() {
             settings={settings}
             onUpdate={handleSettingsUpdate}
             onResetDefaults={handleSettingsReset}
+            onOpenPromoSite={!isNativeShell ? () => navigateToTab('promo') : undefined}
           />
         )}
       </main>

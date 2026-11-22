@@ -91,6 +91,31 @@ export function initAppServiceWorker() {
   }
 }
 
+async function hasLiveBundleChanged(): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || typeof fetch !== 'function') {
+    return false;
+  }
+  try {
+    const activeScripts = Array.from(document.querySelectorAll('script[src]'))
+      .map((s) => s.getAttribute('src') || '')
+      .filter((src) => /\/assets\/main-[^"'\s]+\.js/i.test(src));
+    if (activeScripts.length === 0) {
+      return false;
+    }
+    const resp = await fetch(`/?_v=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (!resp.ok) return false;
+    const html = await resp.text();
+    const matches = html.match(/\/assets\/main-[^"'\s]+\.js/gi);
+    if (!matches || matches.length === 0) return false;
+    return matches.some((m) => !activeScripts.some((curr) => curr.endsWith(m) || curr.includes(m)));
+  } catch {
+    return false;
+  }
+}
+
 export function usePWAUpdate() {
   const [needRefresh, setNeedRefresh] = useState(swNeedRefresh);
   const [checking, setChecking] = useState(false);
@@ -109,12 +134,19 @@ export function usePWAUpdate() {
         const keys = await caches.keys();
         await Promise.all(
           keys
-            .filter((k) => k.startsWith('rivera-app-runtime'))
+            .filter((k) => k.startsWith('rivera-app-runtime') || k.startsWith('workbox-precache'))
             .map((k) => caches.delete(k))
         );
       }
     } catch {
       // ignore cache cleanup failures
+    }
+    if (swRegistration?.waiting) {
+      try {
+        swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      } catch {
+        // ignore
+      }
     }
     if (triggerSWUpdate) {
       try {
@@ -168,6 +200,14 @@ export function usePWAUpdate() {
           return 'ready';
         }
       }
+
+      const bundleChanged = await hasLiveBundleChanged();
+      if (bundleChanged) {
+        swNeedRefresh = true;
+        notifyListeners();
+        return 'ready';
+      }
+
       return swNeedRefresh || controllerChanged ? 'ready' : 'latest';
     } catch {
       return 'latest';

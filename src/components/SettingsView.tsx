@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Moon, RotateCcw, Send, Sun } from 'lucide-react';
+import { Check, Copy, Globe, Moon, RotateCcw, Send, Sun } from 'lucide-react';
 import { getDirectAppInstallerUrl, usePWAUpdate } from '../hooks/usePWAInstall';
 import { TranslationDict } from '../i18n/translations';
 import { APP_VERSION } from '../storage/studioStorage';
@@ -12,6 +12,7 @@ interface SettingsViewProps {
   settings: StudioSettings;
   onUpdate: (patch: Partial<StudioSettings>) => void;
   onResetDefaults: () => void;
+  onOpenPromoSite?: () => void;
 }
 
 const PALETTE_SWATCHES: {
@@ -86,11 +87,16 @@ async function copyTextReliable(text: string): Promise<boolean> {
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = React.memo(
-  ({ t, settings, onUpdate, onResetDefaults }) => {
+  ({ t, settings, onUpdate, onResetDefaults, onOpenPromoSite }) => {
     const { needRefresh } = usePWAUpdate();
     const [copiedLink, setCopiedLink] = useState(false);
+    const [copiedPromoLink, setCopiedPromoLink] = useState(false);
     const copiedTimerRef = useRef<number | null>(null);
+    const copiedPromoTimerRef = useRef<number | null>(null);
     const directInstallerUrl = getDirectAppInstallerUrl();
+    const promoSiteUrl = directInstallerUrl
+      ? directInstallerUrl.replace(/\/\?install=1$/, '/site.html')
+      : '';
     const isNativeShell = isRunningInsideNativeShell();
     const runtimePlatform = getRuntimePlatformLabel();
     const activeTheme: AppTheme = settings.theme === 'light' ? 'light' : 'dark';
@@ -113,6 +119,9 @@ export const SettingsView: React.FC<SettingsViewProps> = React.memo(
         if (copiedTimerRef.current !== null) {
           window.clearTimeout(copiedTimerRef.current);
         }
+        if (copiedPromoTimerRef.current !== null) {
+          window.clearTimeout(copiedPromoTimerRef.current);
+        }
       };
     }, []);
 
@@ -131,6 +140,19 @@ export const SettingsView: React.FC<SettingsViewProps> = React.memo(
       if (!directInstallerUrl) return;
       await copyTextReliable(directInstallerUrl);
       showCopiedState();
+    };
+
+    const handleCopyPromoSiteUrl = async () => {
+      if (!promoSiteUrl) return;
+      await copyTextReliable(promoSiteUrl);
+      if (copiedPromoTimerRef.current !== null) {
+        window.clearTimeout(copiedPromoTimerRef.current);
+      }
+      setCopiedPromoLink(true);
+      copiedPromoTimerRef.current = window.setTimeout(() => {
+        setCopiedPromoLink(false);
+        copiedPromoTimerRef.current = null;
+      }, 4000);
     };
 
     const handleSendDirectInstallerLink = async () => {
@@ -348,6 +370,33 @@ export const SettingsView: React.FC<SettingsViewProps> = React.memo(
                     <Copy className="w-3.5 h-3.5" />
                   )}
                 </button>
+              </div>
+            )}
+
+            {onOpenPromoSite && (
+              <div className="pt-3 border-t border-[var(--surface-border-subtle)] grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={onOpenPromoSite}
+                  className="min-h-[42px] px-3.5 rounded-xl bg-[var(--surface-control)] border border-[var(--surface-border)] hover:border-amber-500/60 text-xs font-semibold text-slate-900 dark:text-zinc-100 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Globe className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span>{t.pwa.promoSiteButton}</span>
+                </button>
+                {promoSiteUrl && (
+                  <button
+                    type="button"
+                    onClick={handleCopyPromoSiteUrl}
+                    className="min-h-[42px] px-3.5 rounded-xl bg-[var(--surface-control)] border border-[var(--surface-border)] hover:border-amber-500/60 text-xs font-semibold text-slate-900 dark:text-zinc-100 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {copiedPromoLink ? (
+                      <Check className="w-4 h-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <Copy className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    )}
+                    <span>{copiedPromoLink ? t.pwa.promoSiteCopied : t.pwa.promoSiteCopy}</span>
+                  </button>
+                )}
               </div>
             )}
 

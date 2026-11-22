@@ -161,6 +161,17 @@
       />
       <script>
         (function () {
+          var s = document.getElementById('rivera-boot-splash');
+          try {
+            var isPromoRoute =
+              /[?&]site=1(?:&|$)/.test(window.location.search) ||
+              window.location.hash === '#site' ||
+              window.location.pathname === '/site';
+            if (isPromoRoute && s) {
+              s.remove();
+              return;
+            }
+          } catch (e) {}
           var v = document.getElementById('rivera-boot-splash-video');
           var fb = document.getElementById('rivera-boot-splash-fallback');
           var state = (window.__riveraBootVideoState = {
