@@ -28,7 +28,12 @@ let mainWindow = null;
 
 function resolveDistFile(requestUrl) {
   const parsed = new URL(requestUrl);
-  let relPath = decodeURIComponent(parsed.pathname || '/');
+  let relPath = '/';
+  try {
+    relPath = decodeURIComponent(parsed.pathname || '/');
+  } catch {
+    relPath = '/';
+  }
   if (relPath === '/' || relPath === '') {
     relPath = '/index.html';
   }
@@ -157,28 +162,30 @@ function createMainWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  app.setName('Rivera V/S Player');
-  registerOfflineAppProtocol();
-  setupApplicationMenu();
-  createMainWindow();
+if (singleInstanceLock) {
+  app.whenReady().then(() => {
+    app.setName('Rivera V/S Player');
+    registerOfflineAppProtocol();
+    setupApplicationMenu();
+    createMainWindow();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow();
+      }
+    });
+  });
+
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
     }
   });
-});
 
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+}

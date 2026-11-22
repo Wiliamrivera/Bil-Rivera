@@ -90,7 +90,8 @@ export async function saveAudioBlobToDB(trackId: string, blob: Blob): Promise<vo
     const tx = db.transaction(STORE_AUDIO, 'readwrite');
     tx.objectStore(STORE_AUDIO).put(blob, trackId);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error || new Error('IndexedDB write error'));
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB write aborted'));
   });
 }
 
@@ -106,7 +107,7 @@ export async function saveAudioBlobsBatchToDB(
       store.put(item.blob, item.id);
     }
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error || new Error('IndexedDB batch transaction error'));
     tx.onabort = () => reject(tx.error || new Error('IndexedDB batch transaction aborted'));
   });
 }
@@ -117,7 +118,8 @@ export async function loadAudioBlobFromDB(trackId: string): Promise<Blob | null>
     const tx = db.transaction(STORE_AUDIO, 'readonly');
     const req = tx.objectStore(STORE_AUDIO).get(trackId);
     req.onsuccess = () => resolve((req.result as Blob) || null);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => reject(req.error || new Error('IndexedDB read error'));
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB read aborted'));
   });
 }
 
@@ -127,7 +129,8 @@ export async function deleteAudioBlobFromDB(trackId: string): Promise<void> {
     const tx = db.transaction(STORE_AUDIO, 'readwrite');
     tx.objectStore(STORE_AUDIO).delete(trackId);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error || new Error('IndexedDB delete error'));
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB delete aborted'));
   });
 }
 

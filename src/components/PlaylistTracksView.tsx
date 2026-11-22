@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   GripVertical,
   ListMusic,
+  Loader2,
   Play,
   Trash2,
   Undo2,
@@ -19,6 +20,7 @@ interface PlaylistTracksViewProps {
   tracks: PracticeTrack[];
   activeTrackId: string;
   isPlaying?: boolean;
+  isImporting?: boolean;
   isAlphabetical: boolean;
   canResetOrder: boolean;
   t: TranslationDict;
@@ -38,6 +40,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
   tracks,
   activeTrackId,
   isPlaying = false,
+  isImporting = false,
   isAlphabetical,
   canResetOrder,
   t,
@@ -184,6 +187,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
       clearHoldTimer();
       if (justDraggedTimerRef.current !== null) {
         window.clearTimeout(justDraggedTimerRef.current);
+        justDraggedTimerRef.current = null;
       }
     };
   }, []);
@@ -349,11 +353,16 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
             {onUploadTracks && (
               <button
                 type="button"
+                disabled={isImporting}
                 onClick={onUploadTracks}
-                className="min-h-[42px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-[var(--accent-fg)] text-sm font-bold flex items-center gap-2 cursor-pointer"
+                className="min-h-[42px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-[var(--accent-fg)] text-sm font-bold flex items-center gap-2 cursor-pointer"
               >
-                <Upload className="w-4 h-4 shrink-0" />
-                <span>{t.importAudio}</span>
+                {isImporting ? (
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+                ) : (
+                  <Upload className="w-4 h-4 shrink-0" />
+                )}
+                <span>{isImporting ? t.uploadModal.uploadingShort : t.importAudio}</span>
               </button>
             )}
           </div>

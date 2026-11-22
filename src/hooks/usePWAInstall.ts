@@ -117,7 +117,11 @@ export function usePWAUpdate() {
       // ignore cache cleanup failures
     }
     if (triggerSWUpdate) {
-      await triggerSWUpdate(true);
+      try {
+        await triggerSWUpdate(true);
+      } catch {
+        // proceed with reload even if SW skipWaiting fails
+      }
     }
     window.location.reload();
   }, []);

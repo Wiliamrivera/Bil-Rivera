@@ -204,15 +204,17 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
       }
       let cancelled = false;
       setLastFolderName(loadLastFolderName());
-      loadLastDirHandle<DirectoryHandleLike>().then((h) => {
-        if (!cancelled && h) {
-          setSavedHandle(h);
-          if (h.name) {
-            setLastFolderName(h.name);
-            saveLastFolderName(h.name);
+      loadLastDirHandle<DirectoryHandleLike>()
+        .then((h) => {
+          if (!cancelled && h) {
+            setSavedHandle(h);
+            if (h.name) {
+              setLastFolderName(h.name);
+              saveLastFolderName(h.name);
+            }
           }
-        }
-      });
+        })
+        .catch(() => {});
       return () => {
         cancelled = true;
       };
@@ -429,6 +431,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
 
     const handleScanSubfolders = async () => {
       setIsScanningFolder(true);
+      setErrorMessage(null);
       try {
         if (handleStack.length > 0) {
           const currentHandle = handleStack[handleStack.length - 1];
@@ -438,6 +441,14 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
           const currentNode = virtualStack[virtualStack.length - 1];
           const allFiles = collectVirtualFilesRecursive(currentNode);
           populateListView(allFiles, [], `${activeFolderLabel} (+ ${t.uploadModal.folderTag})`);
+        }
+      } catch (err) {
+        const errName = (err as { name?: string })?.name;
+        if (errName === 'SecurityError' || errName === 'NotAllowedError') {
+          setErrorMessage(t.uploadModal.rootSecurityError);
+        } else {
+          console.warn('Could not scan subfolders:', err);
+          setErrorMessage(t.uploadModal.uploadEmptyError);
         }
       } finally {
         setIsScanningFolder(false);
@@ -487,13 +498,18 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
     };
 
     const handleSendSelected = async () => {
-      if (!folderFiles) return;
+      if (!folderFiles || isImporting) return;
       const chosen = folderFiles.filter((_, idx) => selectedIndices.has(idx));
       if (chosen.length === 0) return;
       onPreparingImport?.(chosen.length);
       onClose();
       await new Promise<void>((r) => window.setTimeout(r, 0));
-      await onImportFilesRef.current(chosen);
+      try {
+        await onImportFilesRef.current(chosen);
+      } catch (err) {
+        console.warn('Failed to import selected tracks:', err);
+        onImportEmpty?.(t.uploadModal.uploadEmptyError);
+      }
     };
 
     const hiddenInputs = (

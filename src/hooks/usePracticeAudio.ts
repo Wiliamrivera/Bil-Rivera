@@ -238,9 +238,9 @@ export function usePracticeAudio({
         merger.connect(masterGain);
 
         if (ctx.audioWorklet) {
+          const wUrl = createPitchWorkletBlobUrl();
+          workletUrlRef.current = wUrl;
           try {
-            const wUrl = createPitchWorkletBlobUrl();
-            workletUrlRef.current = wUrl;
             await ctx.audioWorklet.addModule(wUrl);
             const worklet = new AudioWorkletNode(ctx, PITCH_WORKLET_NAME, {
               numberOfInputs: 0,
@@ -292,6 +292,11 @@ export function usePracticeAudio({
             worklet.connect(splitter);
           } catch (err) {
             console.warn('AudioWorklet unavailable, using fallback AudioBufferSource:', err);
+          } finally {
+            URL.revokeObjectURL(wUrl);
+            if (workletUrlRef.current === wUrl) {
+              workletUrlRef.current = null;
+            }
           }
         }
         return ctx;
@@ -756,33 +761,37 @@ export function usePracticeAudio({
 
     let cancelled = false;
     const timerId = window.setTimeout(async () => {
-      const ctx = audioCtxRef.current ?? (await ensureAudioGraph(false));
-      if (!ctx || cancelled || activeTrackIdRef.current !== trackId) return;
+      try {
+        const ctx = audioCtxRef.current ?? (await ensureAudioGraph(false));
+        if (!ctx || cancelled || activeTrackIdRef.current !== trackId) return;
 
-      const nextEntry = await getOrDecodeTrack(nextTrackId, ctx);
-      if (cancelled || !nextEntry || activeTrackIdRef.current !== trackId) return;
+        const nextEntry = await getOrDecodeTrack(nextTrackId, ctx);
+        if (cancelled || !nextEntry || activeTrackIdRef.current !== trackId) return;
 
-      const worklet = workletNodeRef.current;
-      if (worklet && stagedWorkletIdRef.current !== nextTrackId) {
-        const ch0Copy = nextEntry.ch0.slice();
-        const ch1Copy = nextEntry.ch1 ? nextEntry.ch1.slice() : null;
-        const transfer: Transferable[] = ch1Copy ? [ch0Copy.buffer, ch1Copy.buffer] : [ch0Copy.buffer];
-        const np = nextPresetRef.current;
+        const worklet = workletNodeRef.current;
+        if (worklet && stagedWorkletIdRef.current !== nextTrackId) {
+          const ch0Copy = nextEntry.ch0.slice();
+          const ch1Copy = nextEntry.ch1 ? nextEntry.ch1.slice() : null;
+          const transfer: Transferable[] = ch1Copy ? [ch0Copy.buffer, ch1Copy.buffer] : [ch0Copy.buffer];
+          const np = nextPresetRef.current;
 
-        worklet.port.postMessage(
-          {
-            type: 'stageNext',
-            id: nextTrackId,
-            ch0: ch0Copy,
-            ch1: ch1Copy,
-            sampleRate: nextEntry.buffer.sampleRate,
-            speed: np ? Math.max(0.25, Math.min(2.5, np.speed)) : 1,
-            semitones: np ? np.pitchSemitones + np.pitchCents / 100 : 0,
-          },
-          transfer
-        );
-        stagedWorkletIdRef.current = nextTrackId;
-        syncWorkletParams(presetRef.current);
+          worklet.port.postMessage(
+            {
+              type: 'stageNext',
+              id: nextTrackId,
+              ch0: ch0Copy,
+              ch1: ch1Copy,
+              sampleRate: nextEntry.buffer.sampleRate,
+              speed: np ? Math.max(0.25, Math.min(2.5, np.speed)) : 1,
+              semitones: np ? np.pitchSemitones + np.pitchCents / 100 : 0,
+            },
+            transfer
+          );
+          stagedWorkletIdRef.current = nextTrackId;
+          syncWorkletParams(presetRef.current);
+        }
+      } catch {
+        // Ignore background staging failures (playback continues unaffected)
       }
     }, 40);
 
@@ -898,72 +907,78 @@ export function usePracticeAudio({
         return;
       }
 
-      const ctx = await ensureAudioGraph(true);
-      if (ctx.state !== 'running') {
-        resumeAudioContextSafe(ctx).catch(() => {});
-      }
-
-      if (
-        targetTrackId &&
-        (!audioBufferRef.current ||
-          (workletNodeRef.current && loadedWorkletIdRef.current !== targetTrackId))
-      ) {
-        const entry = await getOrDecodeTrack(targetTrackId, ctx);
-        if (!entry || activeTrackIdRef.current !== targetTrackId) return;
-        audioBufferRef.current = entry.buffer;
-        sampleRateRef.current = entry.buffer.sampleRate;
-        durationRef.current = entry.buffer.duration;
-        setAudioBuffer(entry.buffer);
-        setDuration(entry.buffer.duration);
-        setPeaks(entry.peaks);
-        if (workletNodeRef.current && loadedWorkletIdRef.current !== targetTrackId) {
-          const ch0Copy = entry.ch0.slice();
-          const ch1Copy = entry.ch1 ? entry.ch1.slice() : null;
-          const transfer: Transferable[] = ch1Copy
-            ? [ch0Copy.buffer, ch1Copy.buffer]
-            : [ch0Copy.buffer];
-          const initPos =
-            typeof startAtSec === 'number'
-              ? Math.max(0, Math.min(entry.buffer.duration, startAtSec))
-              : Math.min(presetRef.current.lastPosition || 0, Math.max(0, entry.buffer.duration - 0.1));
-          currentTimeRef.current = initPos;
-          workletNodeRef.current.port.postMessage(
-            {
-              type: 'load',
-              id: targetTrackId,
-              ch0: ch0Copy,
-              ch1: ch1Copy,
-              sampleRate: entry.buffer.sampleRate,
-              startSample: Math.round(initPos * entry.buffer.sampleRate),
-            },
-            transfer
-          );
-          loadedWorkletIdRef.current = targetTrackId;
+      try {
+        const ctx = await ensureAudioGraph(true);
+        if (ctx.state !== 'running') {
+          resumeAudioContextSafe(ctx).catch(() => {});
         }
+
+        if (
+          targetTrackId &&
+          (!audioBufferRef.current ||
+            (workletNodeRef.current && loadedWorkletIdRef.current !== targetTrackId))
+        ) {
+          const entry = await getOrDecodeTrack(targetTrackId, ctx);
+          if (!entry || activeTrackIdRef.current !== targetTrackId) return;
+          audioBufferRef.current = entry.buffer;
+          sampleRateRef.current = entry.buffer.sampleRate;
+          durationRef.current = entry.buffer.duration;
+          setAudioBuffer(entry.buffer);
+          setDuration(entry.buffer.duration);
+          setPeaks(entry.peaks);
+          if (workletNodeRef.current && loadedWorkletIdRef.current !== targetTrackId) {
+            const ch0Copy = entry.ch0.slice();
+            const ch1Copy = entry.ch1 ? entry.ch1.slice() : null;
+            const transfer: Transferable[] = ch1Copy
+              ? [ch0Copy.buffer, ch1Copy.buffer]
+              : [ch0Copy.buffer];
+            const initPos =
+              typeof startAtSec === 'number'
+                ? Math.max(0, Math.min(entry.buffer.duration, startAtSec))
+                : Math.min(presetRef.current.lastPosition || 0, Math.max(0, entry.buffer.duration - 0.1));
+            currentTimeRef.current = initPos;
+            workletNodeRef.current.port.postMessage(
+              {
+                type: 'load',
+                id: targetTrackId,
+                ch0: ch0Copy,
+                ch1: ch1Copy,
+                sampleRate: entry.buffer.sampleRate,
+                startSample: Math.round(initPos * entry.buffer.sampleRate),
+              },
+              transfer
+            );
+            loadedWorkletIdRef.current = targetTrackId;
+          }
+        }
+
+        const dur = durationRef.current || 0;
+        const targetPos =
+          typeof startAtSec === 'number'
+            ? Math.max(0, Math.min(dur, startAtSec))
+            : currentTimeRef.current;
+
+        currentTimeRef.current = targetPos;
+        pendingUiTimeRef.current = null;
+        setCurrentTime(targetPos);
+
+        if (workletNodeRef.current) {
+          syncWorkletParams(presetRef.current);
+          workletNodeRef.current.port.postMessage({
+            type: 'play',
+            fromSample: Math.round(targetPos * (sampleRateRef.current || 48000)),
+          });
+        } else if (audioBufferRef.current && splitterRef.current) {
+          startFallbackNode(ctx, audioBufferRef.current, targetPos);
+        }
+
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+      } catch (err) {
+        console.error('Failed to start audio playback:', err);
+        isPlayingRef.current = false;
+        setIsPlaying(false);
       }
-
-      const dur = durationRef.current || 0;
-      const targetPos =
-        typeof startAtSec === 'number'
-          ? Math.max(0, Math.min(dur, startAtSec))
-          : currentTimeRef.current;
-
-      currentTimeRef.current = targetPos;
-      pendingUiTimeRef.current = null;
-      setCurrentTime(targetPos);
-
-      if (workletNodeRef.current) {
-        syncWorkletParams(presetRef.current);
-        workletNodeRef.current.port.postMessage({
-          type: 'play',
-          fromSample: Math.round(targetPos * (sampleRateRef.current || 48000)),
-        });
-      } else if (audioBufferRef.current && splitterRef.current) {
-        startFallbackNode(ctx, audioBufferRef.current, targetPos);
-      }
-
-      isPlayingRef.current = true;
-      setIsPlaying(true);
     },
     [ensureAudioGraph, getOrDecodeTrack, startFallbackNode, syncWorkletParams]
   );
@@ -1049,8 +1064,49 @@ export function usePracticeAudio({
     return () => {
       stopFallbackSource();
       decodedCacheRef.current.clear();
+      inflightDecodeRef.current.clear();
       graphInitPromiseRef.current = null;
-      if (workletUrlRef.current) URL.revokeObjectURL(workletUrlRef.current);
+
+      const worklet = workletNodeRef.current;
+      if (worklet) {
+        worklet.port.onmessage = null;
+        try {
+          worklet.disconnect();
+        } catch {
+          // ignore disconnect errors during teardown
+        }
+        workletNodeRef.current = null;
+      }
+
+      const nodesToDisconnect: Array<AudioNode | null> = [
+        splitterRef.current,
+        gainLLRef.current,
+        gainLRRef.current,
+        gainRLRef.current,
+        gainRRRef.current,
+        mergerRef.current,
+        gainNodeRef.current,
+      ];
+      for (const node of nodesToDisconnect) {
+        if (!node) continue;
+        try {
+          node.disconnect();
+        } catch {
+          // ignore disconnect errors during teardown
+        }
+      }
+      splitterRef.current = null;
+      gainLLRef.current = null;
+      gainLRRef.current = null;
+      gainRLRef.current = null;
+      gainRRRef.current = null;
+      mergerRef.current = null;
+      gainNodeRef.current = null;
+
+      if (workletUrlRef.current) {
+        URL.revokeObjectURL(workletUrlRef.current);
+        workletUrlRef.current = null;
+      }
       if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
         audioCtxRef.current.close().catch(() => {});
       }

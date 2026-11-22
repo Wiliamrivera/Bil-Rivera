@@ -264,8 +264,8 @@ export const SetlistsView: React.FC<SetlistsViewProps> = React.memo(({
                   const tones = track.preset.pitchSemitones / 2;
                   const pitchTxt =
                     tones === 0
-                      ? '0 tom'
-                      : `${tones > 0 ? '+' : ''}${Number.isInteger(tones) ? tones : tones.toFixed(1)} tom`;
+                      ? `0 ${t.live.toneUnit}`
+                      : `${tones > 0 ? '+' : ''}${Number.isInteger(tones) ? tones : tones.toFixed(1)} ${t.live.toneUnit}`;
 
                   return (
                     <div

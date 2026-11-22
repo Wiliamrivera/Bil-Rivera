@@ -288,7 +288,13 @@ function loadInitialStudioData() {
     nextInitialTrackId && baseTracks.some((tr) => tr.id === nextInitialTrackId)
       ? nextInitialTrackId
       : baseTracks[0]?.id || '';
-  const initialSetlistId = activeIds.setlistId || 'setlist-practice';
+  const rawSetlistId = activeIds.setlistId;
+  const initialSetlistId =
+    rawSetlistId === 'all' || (rawSetlistId && migratedSetlists.some((sl) => sl.id === rawSetlistId))
+      ? rawSetlistId
+      : migratedSetlists.some((sl) => sl.id === 'setlist-practice')
+        ? 'setlist-practice'
+        : migratedSetlists[0]?.id || 'all';
   return { baseTracks, migratedSetlists, savedSettings, initialTrackId, initialSetlistId };
 }
 
@@ -348,8 +354,11 @@ export default function App() {
   const uploadModalRef = useRef<UploadTracksModalHandle | null>(null);
   const importSuccessTimerRef = useRef<number | null>(null);
   const importErrorTimerRef = useRef<number | null>(null);
+  const exportCleanupTimerRef = useRef<number | null>(null);
   const exitNoticeTimerRef = useRef<number | null>(null);
   const exitArmedUntilRef = useRef<number>(0);
+  const isImportingRef = useRef<boolean>(isImporting);
+  isImportingRef.current = isImporting;
   const activeTabRef = useRef<AppTab>(activeTab);
   activeTabRef.current = activeTab;
   const pendingDeleteTrackRef = useRef<PracticeTrack | null>(pendingDeleteTrack);
@@ -776,6 +785,9 @@ export default function App() {
       if (importErrorTimerRef.current !== null) {
         window.clearTimeout(importErrorTimerRef.current);
       }
+      if (exportCleanupTimerRef.current !== null) {
+        window.clearTimeout(exportCleanupTimerRef.current);
+      }
       if (readyExportUrlRef.current) {
         URL.revokeObjectURL(readyExportUrlRef.current);
       }
@@ -1144,6 +1156,7 @@ export default function App() {
 
   const handleImportFiles = useCallback(
     async (files: FileList | File[]) => {
+      if (isImportingRef.current) return;
       const audioFiles = Array.from(files).filter(
         (file) => file.type.startsWith('audio/') || IMPORT_AUDIO_EXT_RE.test(file.name)
       );
@@ -1153,6 +1166,7 @@ export default function App() {
         showImportError(t.uploadModal.uploadEmptyError);
         return;
       }
+      isImportingRef.current = true;
 
       if (importSuccessTimerRef.current !== null) {
         window.clearTimeout(importSuccessTimerRef.current);
@@ -1406,6 +1420,7 @@ export default function App() {
         if (ctx) {
           ctx.close().catch(() => {});
         }
+        isImportingRef.current = false;
         setIsImporting(false);
         setImportStatus(null);
       }
@@ -1556,7 +1571,11 @@ export default function App() {
     inflightBlobRef.current.delete(trackId);
     blobCacheRef.current.delete(trackId);
     audio.evictTrackCache(trackId);
-    await deleteAudioBlobFromDB(trackId);
+    try {
+      await deleteAudioBlobFromDB(trackId);
+    } catch (err) {
+      console.warn('Could not delete audio blob from DB:', trackId, err);
+    }
 
     const nextTracks = tracksRef.current.filter((tr) => tr.id !== trackId);
     setTracks(nextTracks);
@@ -1648,6 +1667,7 @@ export default function App() {
         return;
       }
 
+      if (!activeTrackIdRef.current) return;
       const act = audioActionsRef.current;
       if (e.code === 'Space') {
         if (target?.closest('button, a, summary, [role="button"]')) return;
@@ -1705,8 +1725,36 @@ export default function App() {
     }
   };
 
+  const clearReadyExport = useCallback(() => {
+    if (exportCleanupTimerRef.current !== null) {
+      window.clearTimeout(exportCleanupTimerRef.current);
+      exportCleanupTimerRef.current = null;
+    }
+    setReadyExport((prev) => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }, []);
+
+  const scheduleReadyExportCleanup = useCallback(
+    (delayMs: number) => {
+      if (exportCleanupTimerRef.current !== null) {
+        window.clearTimeout(exportCleanupTimerRef.current);
+      }
+      exportCleanupTimerRef.current = window.setTimeout(() => {
+        exportCleanupTimerRef.current = null;
+        clearReadyExport();
+      }, delayMs);
+    },
+    [clearReadyExport]
+  );
+
   const handleExportAudio = useCallback(async () => {
     if (!activeTrack || !audio.audioBuffer || isExporting) return;
+    if (exportCleanupTimerRef.current !== null) {
+      window.clearTimeout(exportCleanupTimerRef.current);
+      exportCleanupTimerRef.current = null;
+    }
     setIsExporting(true);
     setExportProgress(0);
     try {
@@ -1787,8 +1835,7 @@ export default function App() {
         const writable = await handle.createWritable();
         await writable.write(blob);
         await writable.close();
-        URL.revokeObjectURL(readyExport.url);
-        setReadyExport(null);
+        clearReadyExport();
         return;
       } catch (err) {
         if ((err as { name?: string })?.name === 'AbortError') return;
@@ -1797,11 +1844,8 @@ export default function App() {
 
     // Fallback to standard browser download (longer cleanup delay for iOS/iPadOS Safari download prompt)
     triggerDirectDownload(readyExport);
-    window.setTimeout(() => {
-      URL.revokeObjectURL(readyExport.url);
-      setReadyExport(null);
-    }, 5000);
-  }, [readyExport, triggerDirectDownload]);
+    scheduleReadyExportCleanup(5000);
+  }, [clearReadyExport, readyExport, scheduleReadyExportCleanup, triggerDirectDownload]);
 
   const handleShareExport = useCallback(async () => {
     if (!readyExport) return;
@@ -1815,8 +1859,7 @@ export default function App() {
             files: [file],
             title: fileName,
           });
-          URL.revokeObjectURL(readyExport.url);
-          setReadyExport(null);
+          clearReadyExport();
           return;
         }
       } catch (err) {
@@ -1826,7 +1869,7 @@ export default function App() {
 
     // Fallback if Share API isn't supported in the current browser context
     await handleChooseSaveLocation();
-  }, [handleChooseSaveLocation, readyExport]);
+  }, [clearReadyExport, handleChooseSaveLocation, readyExport]);
 
   const handleSelectSetlistInStudio = useCallback(
     (nextId: string) => {
@@ -2454,9 +2497,7 @@ export default function App() {
               <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--surface-border-subtle)]">
                 <span className="text-xs font-medium text-slate-500 dark:text-zinc-400">{t.live.controlsHeader}</span>
                 <button
-                  onClick={() =>
-                    setSettings((s) => ({ ...s, swapLR: !s.swapLR }))
-                  }
+                  onClick={() => handleSettingsUpdate({ swapLR: !settings.swapLR })}
                   className={`min-h-[34px] px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     settings.swapLR
                       ? 'bg-amber-500/15 border-amber-500/50 text-amber-800 dark:text-amber-300'
@@ -2726,6 +2767,7 @@ export default function App() {
                 : activeSetlistTracks[0]?.id || ''
             }
             isPlaying={audio.isPlaying}
+            isImporting={isImporting}
             isAlphabetical={isActivePlaylistAlphabetical}
             canResetOrder={canResetActiveOrder}
             t={t}
@@ -2828,10 +2870,7 @@ export default function App() {
       {readyExport && (
         <div
           className="fixed inset-0 z-50 bg-slate-950/55 dark:bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => {
-            URL.revokeObjectURL(readyExport.url);
-            setReadyExport(null);
-          }}
+          onClick={clearReadyExport}
         >
           <div
             className="w-full max-w-sm bg-[var(--surface-card)] border border-[var(--surface-border-subtle)] rounded-2xl p-5 flex flex-col gap-4 shadow-2xl"
@@ -2848,10 +2887,7 @@ export default function App() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  URL.revokeObjectURL(readyExport.url);
-                  setReadyExport(null);
-                }}
+                onClick={clearReadyExport}
                 aria-label={t.pwa.close}
                 className="w-8 h-8 rounded-lg bg-[var(--surface-control)] border border-[var(--surface-border)] flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 cursor-pointer shrink-0"
               >
@@ -2912,10 +2948,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       triggerDirectDownload(readyExport);
-                      window.setTimeout(() => {
-                        URL.revokeObjectURL(readyExport.url);
-                        setReadyExport(null);
-                      }, 1500);
+                      scheduleReadyExportCleanup(1500);
                     }}
                     className="min-h-[44px] px-4 rounded-xl bg-[var(--surface-control)] border border-[var(--surface-border)] hover:border-slate-400 dark:hover:border-zinc-500 text-slate-900 dark:text-zinc-100 text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer"
                   >

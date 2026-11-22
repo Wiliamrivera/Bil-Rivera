@@ -43,6 +43,7 @@ export const TRANSLATIONS = {
       backToStudio: 'Voltar',
       playlistTracksHint: 'Toque na música para tocar · Segure para mover',
       exitBackPrompt: 'Toque em voltar novamente para sair do app',
+      toneUnit: 'tom',
     },
     transport: {
       play: 'Tocar',
@@ -199,6 +200,7 @@ export const TRANSLATIONS = {
       backToStudio: 'Back',
       playlistTracksHint: 'Tap a track to play · Hold to reorder',
       exitBackPrompt: 'Press back again to exit',
+      toneUnit: 'st',
     },
     transport: {
       play: 'Play',
