@@ -68,7 +68,7 @@ jobs:
           npm install --legacy-peer-deps
           npm install --legacy-peer-deps --no-save electron electron-builder
           npm run build
-          npx electron-builder --win --config electron-builder.yml
+          npx electron-builder --win --publish never --config electron-builder.yml
       - uses: actions/upload-artifact@v4
         with:
           name: installer-windows
@@ -88,7 +88,7 @@ jobs:
           npm install --legacy-peer-deps
           npm install --legacy-peer-deps --no-save electron electron-builder
           npm run build
-          npx electron-builder --mac --config electron-builder.yml
+          npx electron-builder --mac --publish never --config electron-builder.yml
       - uses: actions/upload-artifact@v4
         with:
           name: installer-macos
@@ -134,12 +134,16 @@ jobs:
             VERSION=$(node -p "require('./package.json').version")
             TAG_NAME="v${VERSION}"
           fi
+          shopt -s nullglob
+          FILES=(
+            RiveraVSPlayer-Instaladores.zip
+            artifacts/installer-android/*
+            artifacts/installer-windows/*
+            artifacts/installer-macos/*
+          )
           gh release delete "$TAG_NAME" --yes 2>/dev/null || true
           gh release create "$TAG_NAME" \
             --target "${GITHUB_SHA}" \
-            RiveraVSPlayer-Instaladores.zip \
-            artifacts/installer-android/* \
-            artifacts/installer-windows/* \
-            artifacts/installer-macos/* \
+            "${FILES[@]}" \
             --title "Rivera V/S Player $TAG_NAME (Instaladores Offline)" \
             --notes "Pacote completo multiplataforma (Android .apk, Windows .exe, macOS .dmg/.app) pronto para uso 100% offline."

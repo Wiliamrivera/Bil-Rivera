@@ -118,7 +118,7 @@ function buildLocalDesktopIfReady() {
   }
 
   log(`Compilando instalador nativo (${targetFlag}) via electron-builder...`);
-  const ok = runCommand('npx', ['electron-builder', targetFlag, '--config', 'electron-builder.yml']);
+  const ok = runCommand('npx', ['electron-builder', targetFlag, '--publish', 'never', '--config', 'electron-builder.yml']);
   if (!ok) {
     log(`Aviso: electron-builder (${targetFlag}) falhou neste host.`);
     return [];

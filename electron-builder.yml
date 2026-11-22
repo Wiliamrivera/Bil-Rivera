@@ -13,6 +13,7 @@ files:
   - package.json
 
 asar: true
+publish: null
 
 win:
   icon: public/icon-512-v12.png
@@ -26,12 +27,16 @@ win:
         - x64
 
 nsis:
+  artifactName: RiveraVSPlayer-${version}-Windows-Setup-${arch}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Rivera V/S Player
+
+portable:
+  artifactName: RiveraVSPlayer-${version}-Windows-Portable-${arch}.${ext}
 
 mac:
   icon: public/icon-512-v12.png
