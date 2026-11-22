@@ -23,8 +23,8 @@ jobs:
           java-version: 21
       - name: Install dependencies and configure Capacitor Android
         run: |
-          npm install
-          npm install --no-save @capacitor/core @capacitor/cli @capacitor/android
+          npm install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-save @capacitor/core @capacitor/cli @capacitor/android
           npm run build
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
@@ -65,8 +65,8 @@ jobs:
           node-version: 22
       - name: Install dependencies and build Windows installers (.exe)
         run: |
-          npm install
-          npm install --no-save electron electron-builder
+          npm install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-save electron electron-builder
           npm run build
           npx electron-builder --win --config electron-builder.yml
       - uses: actions/upload-artifact@v4
@@ -85,8 +85,8 @@ jobs:
           node-version: 22
       - name: Install dependencies and build macOS DMG/APP
         run: |
-          npm install
-          npm install --no-save electron electron-builder
+          npm install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-save electron electron-builder
           npm run build
           npx electron-builder --mac --config electron-builder.yml
       - uses: actions/upload-artifact@v4
