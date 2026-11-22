@@ -13,6 +13,7 @@ import {
   Minus,
   Music,
   Pause,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
@@ -347,6 +348,8 @@ export default function App() {
   const [showPitchPanel, setShowPitchPanel] = useState(false);
   const [showBpmPanel, setShowBpmPanel] = useState(false);
   const [pendingDeleteTrack, setPendingDeleteTrack] = useState<PracticeTrack | null>(null);
+  const [pendingRenameTrack, setPendingRenameTrack] = useState<PracticeTrack | null>(null);
+  const [renameTitleInput, setRenameTitleInput] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showExitNotice, setShowExitNotice] = useState(false);
   const [bootSplashDone, setBootSplashDone] = useState<boolean>(
@@ -364,6 +367,8 @@ export default function App() {
   activeTabRef.current = activeTab;
   const pendingDeleteTrackRef = useRef<PracticeTrack | null>(pendingDeleteTrack);
   pendingDeleteTrackRef.current = pendingDeleteTrack;
+  const pendingRenameTrackRef = useRef<PracticeTrack | null>(pendingRenameTrack);
+  pendingRenameTrackRef.current = pendingRenameTrack;
   const readyExportRef = useRef(readyExport);
   readyExportRef.current = readyExport;
   const showUploadModalRef = useRef(showUploadModal);
@@ -432,6 +437,11 @@ export default function App() {
     };
 
     const onPopState = () => {
+      if (pendingRenameTrackRef.current) {
+        setPendingRenameTrack(null);
+        ensureHistoryGuard();
+        return;
+      }
       if (pendingDeleteTrackRef.current) {
         setPendingDeleteTrack(null);
         ensureHistoryGuard();
@@ -2020,6 +2030,27 @@ export default function App() {
     setPendingDeleteTrack(track);
   }, []);
 
+  const handleRequestRenameTrack = useCallback((track: PracticeTrack) => {
+    setPendingRenameTrack(track);
+    setRenameTitleInput(track.title);
+  }, []);
+
+  const handleConfirmRenameTrack = useCallback(() => {
+    const target = pendingRenameTrackRef.current;
+    if (!target) return;
+    const trimmed = renameTitleInput.trim();
+    if (!trimmed) return;
+
+    if (trimmed !== target.title) {
+      const nextTracks = tracksRef.current.map((tr) =>
+        tr.id === target.id ? { ...tr, title: trimmed } : tr
+      );
+      setTracks(nextTracks);
+      saveTracks(nextTracks);
+    }
+    setPendingRenameTrack(null);
+  }, [renameTitleInput]);
+
   const handleOpenUploadModal = useCallback(() => setShowUploadModal(true), []);
   const handleCloseUploadModal = useCallback(() => setShowUploadModal(false), []);
   const handleOpenTrackPicker = useCallback(
@@ -2087,7 +2118,13 @@ export default function App() {
 
   const handleTouchStartMain = useCallback(
     (e: React.TouchEvent<HTMLElement>) => {
-      if (e.touches.length !== 1 || pendingDeleteTrack || readyExport || showUploadModal) {
+      if (
+        e.touches.length !== 1 ||
+        pendingDeleteTrack ||
+        pendingRenameTrack ||
+        readyExport ||
+        showUploadModal
+      ) {
         swipeStartRef.current = null;
         return;
       }
@@ -2099,7 +2136,7 @@ export default function App() {
       const touch = e.touches[0];
       swipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
     },
-    [pendingDeleteTrack, readyExport, showUploadModal]
+    [pendingDeleteTrack, pendingRenameTrack, readyExport, showUploadModal]
   );
 
   const handleTouchEndMain = useCallback((e: React.TouchEvent<HTMLElement>) => {
@@ -2399,6 +2436,7 @@ export default function App() {
                 onReorderTracks={handleReorderActivePlaylist}
                 onSortAlphabetical={handleSortActivePlaylistAlphabetical}
                 onResetOrder={handleResetActivePlaylistOrder}
+                onRequestRenameTrack={handleRequestRenameTrack}
                 onRequestDeleteTrack={handleRequestDeleteTrack}
                 onOpenFullView={isAndroidClient ? handleOpenPlaylistTracksView : undefined}
                 onUnlockAudio={audio.unlockAudio}
@@ -2805,6 +2843,7 @@ export default function App() {
             onReorderTracks={handleReorderActivePlaylist}
             onSortAlphabetical={handleSortActivePlaylistAlphabetical}
             onResetOrder={handleResetActivePlaylistOrder}
+            onRequestRenameTrack={handleRequestRenameTrack}
             onRequestDeleteTrack={handleRequestDeleteTrack}
             onUploadTracks={handleOpenTrackPicker}
             onPrewarmTrack={audio.prewarmTrack}
@@ -2828,6 +2867,7 @@ export default function App() {
             onMoveTrackInSetlist={handleMoveTrackInSetlist}
             onSortSetlistAlphabetical={handleSortSetlistAlphabetical}
             onResetSetlistOrder={handleResetSetlistOrder}
+            onRequestRenameTrack={handleRequestRenameTrack}
             onOpenUploadModal={handleSetlistOpenUploadModal}
             onPrewarmTrack={audio.prewarmTrack}
             onPrefetchTracks={audio.prefetchTracks}
@@ -2892,6 +2932,85 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Rename Track Modal */}
+      {pendingRenameTrack && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/55 dark:bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPendingRenameTrack(null)}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleConfirmRenameTrack();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-[var(--surface-card)] border border-[var(--surface-border-subtle)] rounded-2xl p-5 flex flex-col gap-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-700 dark:text-amber-400 shrink-0">
+                  <Pencil className="w-4 h-4" />
+                </div>
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-zinc-100 truncate">
+                  {t.live.renameTrackTitle}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingRenameTrack(null)}
+                aria-label={t.live.cancel}
+                className="w-8 h-8 rounded-lg bg-[var(--surface-control)] border border-[var(--surface-border)] flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="rivera-rename-track-input"
+                className="text-xs font-semibold text-slate-600 dark:text-zinc-300"
+              >
+                {t.live.renameTrackLabel}
+              </label>
+              <input
+                id="rivera-rename-track-input"
+                type="text"
+                autoFocus
+                value={renameTitleInput}
+                onChange={(e) => setRenameTitleInput(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setPendingRenameTrack(null);
+                  }
+                }}
+                placeholder={t.live.renameTrackPlaceholder}
+                maxLength={120}
+                className="w-full h-11 px-3 rounded-xl bg-[var(--surface-base)] border border-[var(--surface-border)] focus:border-amber-500 focus:outline-none text-sm font-medium text-slate-900 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingRenameTrack(null)}
+                className="min-h-[44px] px-4 rounded-xl bg-[var(--surface-control)] border border-[var(--surface-border)] text-sm font-semibold text-slate-800 dark:text-zinc-200 hover:border-slate-400 dark:hover:border-zinc-500 cursor-pointer"
+              >
+                {t.live.cancel}
+              </button>
+              <button
+                type="submit"
+                disabled={!renameTitleInput.trim()}
+                className="min-h-[44px] px-4 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-[var(--accent-fg)] text-sm font-bold cursor-pointer"
+              >
+                {t.live.saveRename}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

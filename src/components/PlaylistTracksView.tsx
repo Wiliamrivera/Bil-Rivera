@@ -5,6 +5,7 @@ import {
   GripVertical,
   ListMusic,
   Loader2,
+  Pencil,
   Play,
   Trash2,
   Undo2,
@@ -29,6 +30,7 @@ interface PlaylistTracksViewProps {
   onReorderTracks: (orderedIds: string[]) => void;
   onSortAlphabetical: () => void;
   onResetOrder: () => void;
+  onRequestRenameTrack: (track: PracticeTrack) => void;
   onRequestDeleteTrack: (track: PracticeTrack) => void;
   onUploadTracks?: () => void;
   onPrewarmTrack?: (trackId: string) => void;
@@ -49,6 +51,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
   onReorderTracks,
   onSortAlphabetical,
   onResetOrder,
+  onRequestRenameTrack,
   onRequestDeleteTrack,
   onUploadTracks,
   onPrewarmTrack,
@@ -452,21 +455,40 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      clearHoldTimer();
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRequestDeleteTrack(tr);
-                    }}
-                    aria-label={t.live.deleteTrackTitle}
-                    className="min-w-[44px] min-h-[44px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/15 shrink-0 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        clearHoldTimer();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRequestRenameTrack(tr);
+                      }}
+                      title={t.live.renameTrackTitle}
+                      aria-label={t.live.renameTrackTitle}
+                      className="min-w-[42px] min-h-[42px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-amber-700 dark:hover:text-amber-400 hover:bg-amber-500/15 shrink-0 cursor-pointer"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        clearHoldTimer();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRequestDeleteTrack(tr);
+                      }}
+                      aria-label={t.live.deleteTrackTitle}
+                      className="min-w-[42px] min-h-[42px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/15 shrink-0 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

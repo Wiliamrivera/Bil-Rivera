@@ -32,6 +32,8 @@ jobs:
           restore-keys: |
             gradle-android-
       - name: Install dependencies and configure Capacitor Android
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
         run: |
           npm install --legacy-peer-deps
           npm install --legacy-peer-deps --no-save @capacitor/core @capacitor/cli @capacitor/android
@@ -39,7 +41,12 @@ jobs:
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
           node scripts/patch-android-gradle.mjs
-      - name: Build and sign installable Android APK
+      - name: Build and sign Android APK and Play Store AAB
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           mkdir -p out-android
           cd android
@@ -47,20 +54,20 @@ jobs:
 
           BUILD_OK=0
           if [ "${{ steps.gradle-cache.outputs.cache-hit }}" = "true" ]; then
-            echo "Gradle cache aquecido: tentando build --offline primeiro..."
-            if ./gradlew assembleRelease --offline --no-daemon --max-workers=2; then
+            echo "Gradle cache aquecido: tentando build --offline primeiro (APK + AAB)..."
+            if ./gradlew assembleRelease bundleRelease --offline --no-daemon --max-workers=2; then
               BUILD_OK=1
             fi
           fi
 
           if [ "$BUILD_OK" -eq 0 ]; then
             for ATTEMPT in 1 2 3; do
-              echo "Tentativa Gradle $ATTEMPT/3..."
+              echo "Tentativa Gradle $ATTEMPT/3 (assembleRelease + bundleRelease)..."
               EXTRA_FLAG=""
               if [ "$ATTEMPT" -eq 3 ]; then
                 EXTRA_FLAG="--refresh-dependencies"
               fi
-              if ./gradlew assembleRelease --no-daemon --max-workers=2 $EXTRA_FLAG; then
+              if ./gradlew assembleRelease bundleRelease --no-daemon --max-workers=2 $EXTRA_FLAG; then
                 BUILD_OK=1
                 break
               fi
@@ -70,30 +77,66 @@ jobs:
           fi
 
           if [ "$BUILD_OK" -eq 0 ]; then
-            echo "Erro: assembleRelease falhou apos 3 tentativas."
+            echo "Erro: assembleRelease/bundleRelease falhou apos 3 tentativas."
             exit 1
+          fi
+
+          KEYSTORE_PATH="/tmp/rivera-release.jks"
+          rm -f "$KEYSTORE_PATH" /tmp/aligned.apk
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            echo "Usando keystore de release configurada via GitHub Secrets..."
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$KEYSTORE_PATH"
+            STORE_PASS="$ANDROID_KEYSTORE_PASSWORD"
+            KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          else
+            echo "::warning::Secrets de assinatura Android (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS) nao configurados. Usando keystore temporaria (apenas para testes offline; configure os secrets para publicar na Google Play Store)."
+            KEY_ALIAS="rivera"
+            STORE_PASS="rivera1234"
+            KEY_PASS="rivera1234"
+            keytool -genkeypair -v -keystore "$KEYSTORE_PATH" -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=Rivera VS Player, OU=Audio, O=Rivera, L=BR, S=SP, C=BR"
           fi
 
           UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$UNSIGNED_APK" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ] && [ -x "$BUILD_TOOLS_DIR/zipalign" ]; then
-            keytool -genkeypair -v -keystore /tmp/rivera-release.jks -alias rivera \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass rivera1234 -keypass rivera1234 \
-              -dname "CN=Rivera VS Player, OU=Audio, O=Rivera, L=BR, S=SP, C=BR"
             "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$UNSIGNED_APK" /tmp/aligned.apk
-            "$BUILD_TOOLS_DIR/apksigner" sign --ks /tmp/rivera-release.jks \
-              --ks-key-alias rivera --ks-pass pass:rivera1234 --key-pass pass:rivera1234 \
+            "$BUILD_TOOLS_DIR/apksigner" sign --ks "$KEYSTORE_PATH" \
+              --ks-key-alias "$KEY_ALIAS" --ks-pass "pass:$STORE_PASS" --key-pass "pass:$KEY_PASS" \
               --out ../out-android/RiveraVSPlayer-Android.apk /tmp/aligned.apk
           else
             ./gradlew assembleDebug --no-daemon --max-workers=2
             DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
             cp -v "$DEBUG_APK" ../out-android/RiveraVSPlayer-Android.apk
           fi
+
+          UNSIGNED_AAB=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+          if [ -z "$UNSIGNED_AAB" ]; then
+            echo "Erro: arquivo .aab de release nao encontrado em app/build/outputs/bundle/release."
+            rm -f "$KEYSTORE_PATH" /tmp/aligned.apk
+            exit 1
+          fi
+
+          jarsigner -verbose -digestalg SHA-256 \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$STORE_PASS" \
+            -keypass "$KEY_PASS" \
+            -signedjar ../out-android/RiveraVSPlayer-Android.aab \
+            "$UNSIGNED_AAB" "$KEY_ALIAS"
+          jarsigner -verify ../out-android/RiveraVSPlayer-Android.aab
+
+          rm -f "$KEYSTORE_PATH" /tmp/aligned.apk
+          ls -lh ../out-android/
       - uses: actions/upload-artifact@v4
         with:
           name: installer-android
-          path: out-android/*.apk
+          path: |
+            out-android/*.apk
+            out-android/*.aab
 
   build-windows:
     runs-on: windows-latest
@@ -155,7 +198,7 @@ jobs:
           Rivera V/S Player - Instaladores Offline Multiplataforma
           =========================================================
           Escolha a pasta do seu dispositivo:
-          - Android/: instale o arquivo .apk no celular ou tablet Android.
+          - Android/: instale o arquivo .apk direto no celular/tablet Android, ou envie o .aab para a Google Play Store.
           - Windows/: execute o instalador .exe (ou a versao portable .exe) no Windows.
           - macOS/: abra o arquivo .dmg (ou extraia o .app) no Mac.
 
@@ -187,4 +230,4 @@ jobs:
             --target "${GITHUB_SHA}" \
             "${FILES[@]}" \
             --title "Rivera V/S Player $TAG_NAME (Instaladores Offline)" \
-            --notes "Pacote completo multiplataforma (Android .apk, Windows .exe, macOS .dmg/.app) pronto para uso 100% offline."
+            --notes "Pacote completo multiplataforma (Android .apk offline + .aab Google Play Store, Windows .exe, macOS .dmg/.app) pronto para uso 100% offline."

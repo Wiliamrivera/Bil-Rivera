@@ -86,15 +86,19 @@ function buildLocalAndroidIfReady() {
   runCommand('npx', ['cap', 'sync', 'android']);
   runCommand('node', ['scripts/patch-android-gradle.mjs']);
 
-  log('Compilando APK Android (assembleRelease)...');
-  const ok = runCommand(gradlew, ['assembleRelease', '--no-daemon', '--max-workers=2'], androidDir);
+  log('Compilando APK e App Bundle Android (assembleRelease + bundleRelease)...');
+  const ok = runCommand(gradlew, ['assembleRelease', 'bundleRelease', '--no-daemon', '--max-workers=2'], androidDir);
   if (!ok) {
     log('Aviso: compilacao Gradle Android falhou neste host.');
     return [];
   }
 
   const apkDir = path.join(androidDir, 'app', 'build', 'outputs', 'apk');
-  return findFilesRecursive(apkDir, (_p, name) => name.toLowerCase().endsWith('.apk'));
+  const bundleDir = path.join(androidDir, 'app', 'build', 'outputs', 'bundle');
+  return [
+    ...findFilesRecursive(apkDir, (_p, name) => name.toLowerCase().endsWith('.apk')),
+    ...findFilesRecursive(bundleDir, (_p, name) => name.toLowerCase().endsWith('.aab')),
+  ];
 }
 
 function buildLocalDesktopIfReady() {
@@ -151,7 +155,8 @@ function writeReadme(counts) {
 Escolha a pasta correspondente ao seu sistema operacional:
 
 1. Android/
-   - Instale o arquivo .apk no seu celular ou tablet Android.
+   - Instale o arquivo .apk diretamente no seu celular ou tablet Android (offline).
+   - Use o arquivo .aab (Android App Bundle) caso esteja publicando na Google Play Store.
    - Arquivos incluidos nesta compilacao: ${counts.android}
 
 2. Windows/
@@ -165,7 +170,7 @@ Escolha a pasta correspondente ao seu sistema operacional:
 Como gerar os instaladores nativos em qualquer maquina ou automaticamente na nuvem:
 - Windows (.exe): npm install --save-dev electron electron-builder && npm run package:installers
 - macOS (.dmg / .app): npm install --save-dev electron electron-builder && npm run package:installers
-- Android (.apk): npm install @capacitor/core @capacitor/cli @capacitor/android && npx cap add android && npx cap sync android && npm run package:installers
+- Android (.apk / .aab): npm install @capacitor/core @capacitor/cli @capacitor/android && npx cap add android && npx cap sync android && npm run package:installers
 - Automatico nos 3 sistemas juntos: use o workflow ".github/workflows/build-installers.yml" no GitHub Actions.
 
 Funcionamento 100% Offline:
@@ -238,12 +243,12 @@ async function main() {
     ...builtDesktopCandidates,
     ...findFilesRecursive(
       RELEASE_DESKTOP_DIR,
-      (_p, name) => /\.(apk|exe|msi|dmg|pkg)$/i.test(name) || /-mac.*\.zip$/i.test(name)
+      (_p, name) => /\.(apk|aab|exe|msi|dmg|pkg)$/i.test(name) || /-mac.*\.zip$/i.test(name)
     ),
   ];
 
   const uniqueCandidates = Array.from(new Set(existingReleaseCandidates));
-  const androidCount = copyMatchingArtifacts(uniqueCandidates, OUT_ANDROID, (name) => /\.apk$/i.test(name));
+  const androidCount = copyMatchingArtifacts(uniqueCandidates, OUT_ANDROID, (name) => /\.(apk|aab)$/i.test(name));
   const windowsCount = copyMatchingArtifacts(uniqueCandidates, OUT_WINDOWS, (name) => /\.(exe|msi)$/i.test(name));
   const macCount = copyMatchingArtifacts(
     uniqueCandidates,

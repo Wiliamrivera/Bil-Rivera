@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownAZ, ChevronDown, GripVertical, Trash2, Undo2 } from 'lucide-react';
+import { ArrowDownAZ, ChevronDown, GripVertical, Pencil, Trash2, Undo2 } from 'lucide-react';
 import { formatTimecode } from '../audio/audioUtils';
 import { TranslationDict } from '../i18n/translations';
 import { PracticeTrack } from '../types/studio';
@@ -14,6 +14,7 @@ interface PlaylistTrackDropdownProps {
   onReorderTracks: (orderedIds: string[]) => void;
   onSortAlphabetical: () => void;
   onResetOrder: () => void;
+  onRequestRenameTrack: (track: PracticeTrack) => void;
   onRequestDeleteTrack: (track: PracticeTrack) => void;
   onOpenFullView?: () => void;
   onUnlockAudio?: () => void;
@@ -31,6 +32,7 @@ export const PlaylistTrackDropdown: React.FC<PlaylistTrackDropdownProps> = React
   onReorderTracks,
   onSortAlphabetical,
   onResetOrder,
+  onRequestRenameTrack,
   onRequestDeleteTrack,
   onOpenFullView,
   onUnlockAudio,
@@ -244,37 +246,51 @@ export const PlaylistTrackDropdown: React.FC<PlaylistTrackDropdownProps> = React
 
   return (
     <div ref={containerRef} className="relative">
-      {/* Trigger button opening full playlist view or inline dropdown */}
-      <button
-        type="button"
-        onClick={() => {
-          onUnlockAudio?.();
-          if (onOpenFullView) {
-            onOpenFullView();
-          } else {
-            setIsOpen((v) => !v);
-          }
-        }}
-        aria-expanded={onOpenFullView ? undefined : isOpen}
-        className={`w-full min-h-[42px] px-3 rounded-xl bg-[var(--surface-base)] border transition-colors flex items-center justify-between gap-2 text-left cursor-pointer ${
-          isOpen
-            ? 'border-amber-500'
-            : 'border-[var(--surface-border)] hover:border-slate-400 dark:hover:border-zinc-500'
-        }`}
-      >
-        <span className="font-display text-sm sm:text-base font-semibold text-slate-900 dark:text-zinc-100 truncate">
-          {activeTrack ? activeTrack.title : t.live.noTracksEmpty}
-        </span>
-        <ChevronDown
-          className={`w-4 h-4 text-slate-500 dark:text-zinc-400 shrink-0 transition-transform duration-150 ${
-            onOpenFullView
-              ? '-rotate-90 text-amber-600 dark:text-amber-400'
-              : isOpen
-                ? 'rotate-180 text-amber-600 dark:text-amber-400'
-                : ''
+      {/* Trigger button opening full playlist view or inline dropdown + quick rename pencil button */}
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            onUnlockAudio?.();
+            if (onOpenFullView) {
+              onOpenFullView();
+            } else {
+              setIsOpen((v) => !v);
+            }
+          }}
+          aria-expanded={onOpenFullView ? undefined : isOpen}
+          className={`flex-1 min-w-0 min-h-[42px] px-3 rounded-xl bg-[var(--surface-base)] border transition-colors flex items-center justify-between gap-2 text-left cursor-pointer ${
+            isOpen
+              ? 'border-amber-500'
+              : 'border-[var(--surface-border)] hover:border-slate-400 dark:hover:border-zinc-500'
           }`}
-        />
-      </button>
+        >
+          <span className="font-display text-sm sm:text-base font-semibold text-slate-900 dark:text-zinc-100 truncate">
+            {activeTrack ? activeTrack.title : t.live.noTracksEmpty}
+          </span>
+          <ChevronDown
+            className={`w-4 h-4 text-slate-500 dark:text-zinc-400 shrink-0 transition-transform duration-150 ${
+              onOpenFullView
+                ? '-rotate-90 text-amber-600 dark:text-amber-400'
+                : isOpen
+                  ? 'rotate-180 text-amber-600 dark:text-amber-400'
+                  : ''
+            }`}
+          />
+        </button>
+
+        {activeTrack && (
+          <button
+            type="button"
+            onClick={() => onRequestRenameTrack(activeTrack)}
+            title={t.live.renameTrackTitle}
+            aria-label={t.live.renameTrackTitle}
+            className="min-w-[42px] min-h-[42px] rounded-xl bg-[var(--surface-control)] border border-[var(--surface-border)] hover:border-amber-500/60 text-slate-600 dark:text-zinc-300 hover:text-amber-700 dark:hover:text-amber-400 flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+          >
+            <Pencil className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       {/* Expandable Playlist Dropdown with Hold-to-Reorder, A-Z Sort, Reset & Trash */}
       {isOpen && (
@@ -395,21 +411,40 @@ export const PlaylistTrackDropdown: React.FC<PlaylistTrackDropdownProps> = React
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        clearHoldTimer();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRequestDeleteTrack(tr);
-                      }}
-                      aria-label={t.live.deleteTrackTitle}
-                      className="min-w-[42px] min-h-[42px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/15 shrink-0 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          clearHoldTimer();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRequestRenameTrack(tr);
+                        }}
+                        title={t.live.renameTrackTitle}
+                        aria-label={t.live.renameTrackTitle}
+                        className="min-w-[40px] min-h-[40px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-amber-700 dark:hover:text-amber-400 hover:bg-amber-500/15 shrink-0 cursor-pointer"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          clearHoldTimer();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRequestDeleteTrack(tr);
+                        }}
+                        aria-label={t.live.deleteTrackTitle}
+                        className="min-w-[40px] min-h-[40px] rounded-lg flex items-center justify-center text-slate-500 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-500/15 shrink-0 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}

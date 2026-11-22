@@ -144,6 +144,34 @@ function patchAndroidManifest(manifestPath) {
   }
 }
 
+function patchAppVersion(appBuildGradlePath) {
+  if (!fs.existsSync(appBuildGradlePath)) return;
+  const original = fs.readFileSync(appBuildGradlePath, 'utf8');
+  let updated = original;
+
+  const pkgPath = path.join(ROOT_DIR, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg.version && typeof pkg.version === 'string') {
+      updated = updated.replace(
+        /(\bversionName(?:\s*=\s*|\s+))(["'])[^"']*\2/,
+        `$1"${pkg.version}"`
+      );
+    }
+  }
+
+  const rawCode = process.env.ANDROID_VERSION_CODE;
+  const parsedCode = rawCode ? Number.parseInt(rawCode, 10) : NaN;
+  if (Number.isInteger(parsedCode) && parsedCode > 0) {
+    updated = updated.replace(/(\bversionCode(?:\s*=\s*|\s+))\d+/, `$1${parsedCode}`);
+  }
+
+  if (updated !== original) {
+    fs.writeFileSync(appBuildGradlePath, updated, 'utf8');
+    console.log(`[gradle-patch] Versao do app atualizada em: ${path.relative(ROOT_DIR, appBuildGradlePath)}`);
+  }
+}
+
 function main() {
   if (!fs.existsSync(ANDROID_DIR)) {
     console.log('[gradle-patch] Pasta android/ nao encontrada ainda; nada a ajustar.');
@@ -162,6 +190,7 @@ function main() {
     patchGradleFile(file);
   }
 
+  patchAppVersion(path.join(ANDROID_DIR, 'app', 'build.gradle'));
   patchGradleProperties(path.join(ANDROID_DIR, 'gradle.properties'));
   patchAndroidManifest(path.join(ANDROID_DIR, 'app', 'src', 'main', 'AndroidManifest.xml'));
 }

@@ -6,6 +6,7 @@ import {
   FolderPlus,
   ListMusic,
   Loader2,
+  Pencil,
   Play,
   Plus,
   Trash2,
@@ -32,6 +33,7 @@ interface SetlistsViewProps {
   onMoveTrackInSetlist: (setlistId: string, trackId: string, dir: -1 | 1) => void;
   onSortSetlistAlphabetical: (setlistId: string) => void;
   onResetSetlistOrder: (setlistId: string) => void;
+  onRequestRenameTrack?: (track: PracticeTrack) => void;
   onOpenUploadModal?: (isNewPlaylist?: boolean) => void;
   onPrewarmTrack?: (trackId: string) => void;
   onPrefetchTracks?: (trackIds: string[]) => () => void;
@@ -52,6 +54,7 @@ export const SetlistsView: React.FC<SetlistsViewProps> = React.memo(({
   onMoveTrackInSetlist,
   onSortSetlistAlphabetical,
   onResetSetlistOrder,
+  onRequestRenameTrack,
   onOpenUploadModal,
   onPrewarmTrack,
   onPrefetchTracks,
@@ -331,6 +334,17 @@ export const SetlistsView: React.FC<SetlistsViewProps> = React.memo(({
                         >
                           <ArrowDown className="w-4 h-4" />
                         </button>
+                        {onRequestRenameTrack && (
+                          <button
+                            type="button"
+                            onClick={() => onRequestRenameTrack(track)}
+                            title={t.live.renameTrackTitle}
+                            aria-label={t.live.renameTrackTitle}
+                            className="p-2 rounded-lg text-slate-500 dark:text-zinc-400 hover:text-amber-700 dark:hover:text-amber-400 hover:bg-amber-500/15 cursor-pointer"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => onToggleTrackInSetlist(openedSetlist.id, track.id)}

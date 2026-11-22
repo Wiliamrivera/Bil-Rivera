@@ -44,6 +44,10 @@ export const TRANSLATIONS = {
       playlistTracksHint: 'Toque na música para tocar · Segure para mover',
       exitBackPrompt: 'Toque em voltar novamente para sair do app',
       toneUnit: 'tom',
+      renameTrackTitle: 'Renomear música',
+      renameTrackLabel: 'Novo nome da música',
+      renameTrackPlaceholder: 'Digite o nome da música...',
+      saveRename: 'Salvar',
     },
     transport: {
       play: 'Tocar',
@@ -203,6 +207,10 @@ export const TRANSLATIONS = {
       playlistTracksHint: 'Tap a track to play · Hold to reorder',
       exitBackPrompt: 'Press back again to exit',
       toneUnit: 'st',
+      renameTrackTitle: 'Rename track',
+      renameTrackLabel: 'Track name',
+      renameTrackPlaceholder: 'Enter track name...',
+      saveRename: 'Save',
     },
     transport: {
       play: 'Play',
