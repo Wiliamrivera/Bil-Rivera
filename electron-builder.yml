@@ -1,0 +1,49 @@
+appId: com.riveravs.player
+productName: Rivera V/S Player
+copyright: Copyright © Rivera V/S Player
+artifactName: RiveraVSPlayer-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: release-desktop
+  buildResources: public
+
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+asar: true
+
+win:
+  icon: public/icon-512-v12.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Rivera V/S Player
+
+mac:
+  icon: public/icon-512-v12.png
+  category: public.app-category.music
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64

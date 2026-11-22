@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pt-BR" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Rivera V/S Player" />
+    <title>Rivera V/S Player</title>
+    <meta name="description" content="Estúdio prático para shows ao vivo e ensaios com controle de Pitch, BPM e volumes L/R independentes." />
+    <meta property="og:title" content="Rivera V/S Player" />
+    <meta property="og:description" content="Estúdio prático para shows ao vivo e ensaios com controle de Pitch, BPM e volumes L/R independentes." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-v12.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192-v12.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v12.png" />
+    <link rel="preload" as="image" href="/logo-vs-v12.png" />
+    <script>
+      try {
+        var rawSettings = localStorage.getItem('riffforge_settings_v1');
+        if (rawSettings) {
+          var parsedSettings = JSON.parse(rawSettings);
+          var palette = parsedSettings && parsedSettings.colorPalette;
+          if (palette === 'crimson' || palette === 'mint' || palette === 'cobalt') {
+            document.documentElement.setAttribute('data-palette', palette);
+          }
+          var isLight = parsedSettings && parsedSettings.theme === 'light';
+          if (isLight) {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.style.colorScheme = 'light';
+          }
+          var bgByPalette = {
+            amber: { dark: '#000000', light: '#F4F5F7' },
+            crimson: { dark: '#111219', light: '#F6F4F6' },
+            mint: { dark: '#1E2228', light: '#F2F6F4' },
+            cobalt: { dark: '#0B0F17', light: '#F2F5FA' }
+          };
+          var pKey = bgByPalette[palette] ? palette : 'amber';
+          var metaThemeColor = document.querySelector('meta[name="theme-color"]');
+          if (metaThemeColor) {
+            metaThemeColor.setAttribute('content', bgByPalette[pKey][isLight ? 'light' : 'dark']);
+          }
+        }
+      } catch (e) {}
+    </script>
+    <style>
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        min-height: 100%;
+        overscroll-behavior-x: none;
+      }
+      html:not(.dark), html:not(.dark) body, html:not(.dark) #root {
+        background-color: var(--surface-root, #F4F5F7);
+      }
+      html.dark, html.dark body, html.dark #root {
+        background-color: var(--surface-root, #000000);
+      }
+      #rivera-boot-splash {
+        position: fixed;
+        top: -4px;
+        right: -4px;
+        bottom: -4px;
+        left: -4px;
+        width: calc(100vw + 8px);
+        height: calc(100dvh + 8px);
+        z-index: 99999;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000000 !important;
+        overflow: hidden;
+        opacity: 1;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        will-change: opacity, transform;
+        transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1), transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #rivera-boot-splash::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 22px;
+        background: linear-gradient(to top, #000000 45%, rgba(0, 0, 0, 0) 100%);
+        pointer-events: none;
+        z-index: 2;
+      }
+      #rivera-boot-splash-video {
+        width: min(100vw, 460px);
+        height: min(100dvh, 820px);
+        max-width: 100vw;
+        max-height: 100dvh;
+        object-fit: contain;
+        background: #000000;
+        border: 0;
+        outline: 0;
+        display: block;
+        opacity: 0;
+        pointer-events: none;
+        user-select: none;
+        clip-path: inset(3px 3px 6px 3px);
+        -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000000 3%, #000000 94%, transparent 100%);
+        mask-image: linear-gradient(to bottom, transparent 0%, #000000 3%, #000000 94%, transparent 100%);
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        transition: opacity 140ms ease-out;
+      }
+      #rivera-boot-splash-fallback {
+        position: absolute;
+        width: min(192px, 48vw);
+        height: min(192px, 48vw);
+        aspect-ratio: 1 / 1;
+        object-fit: contain;
+        background: #000000;
+        border-radius: 24px;
+        display: none;
+        opacity: 0;
+        pointer-events: none;
+        user-select: none;
+        transform: translateZ(0);
+        backface-visibility: hidden;
+        transition: opacity 160ms ease-out;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #rivera-boot-splash,
+        #rivera-boot-splash-video,
+        #rivera-boot-splash-fallback {
+          transition-duration: 80ms;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-[var(--surface-base)] text-slate-900 dark:text-[#F3F4F6] antialiased selection:bg-amber-500/30 selection:text-amber-900 dark:selection:text-amber-200">
+    <div id="rivera-boot-splash" aria-hidden="true">
+      <video
+        id="rivera-boot-splash-video"
+        src="/assets/aistudio/intro_01ac2edf.mp4"
+        autoplay
+        muted
+        playsinline
+        webkit-playsinline="true"
+        preload="auto"
+        disablepictureinpicture
+        disableremoteplayback
+      ></video>
+      <img
+        id="rivera-boot-splash-fallback"
+        src="/logo-vs-v12.png"
+        width="192"
+        height="192"
+        alt="Rivera V/S Player"
+        decoding="async"
+      />
+      <script>
+        (function () {
+          var v = document.getElementById('rivera-boot-splash-video');
+          var fb = document.getElementById('rivera-boot-splash-fallback');
+          var state = (window.__riveraBootVideoState = {
+            ended: false,
+            error: false,
+            blocked: false,
+            started: false
+          });
+          if (!v) return;
+          v.muted = true;
+          v.defaultMuted = true;
+          v.playsInline = true;
+          v.setAttribute('playsinline', '');
+          v.setAttribute('webkit-playsinline', 'true');
+          v.setAttribute('muted', '');
+
+          var revealVideo = function () {
+            state.started = true;
+            v.style.opacity = '1';
+          };
+          var showFallback = function () {
+            v.style.display = 'none';
+            if (fb) {
+              fb.style.display = 'block';
+              fb.style.opacity = '1';
+            }
+          };
+
+          v.addEventListener('playing', revealVideo, { once: true });
+          v.addEventListener('loadeddata', revealVideo, { once: true });
+          v.addEventListener('ended', function () {
+            state.ended = true;
+          }, { once: true });
+          v.addEventListener('error', function () {
+            state.error = true;
+            showFallback();
+          }, { once: true });
+
+          if (v.readyState >= 2) {
+            revealVideo();
+          }
+          try {
+            var p = v.play();
+            if (p && typeof p.catch === 'function') {
+              p.catch(function () {
+                state.blocked = true;
+                showFallback();
+              });
+            }
+          } catch (e) {
+            state.blocked = true;
+            showFallback();
+          }
+        })();
+      </script>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

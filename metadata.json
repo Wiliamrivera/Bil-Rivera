@@ -1,0 +1,6 @@
+{
+  "name": "RiffForge",
+  "description": "Estúdio prático de prática musical com loop A-B na batida, controle independente de velocidade e afinação, marcadores de seção e letras sincronizadas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

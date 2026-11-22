@@ -1,0 +1,100 @@
+name: Build Multiplatform Offline Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install dependencies and Capacitor Android
+        run: |
+          npm ci
+          npm install --no-save @capacitor/core @capacitor/cli @capacitor/android
+          npm run build
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+      - name: Build release APK (unsigned/debuggable release artifact)
+        run: |
+          cd android
+          ./gradlew assembleRelease
+      - name: Stage Android output
+        run: |
+          mkdir -p out-android
+          find android/app/build/outputs/apk -name "*.apk" -exec cp {} out-android/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-android
+          path: out-android/*.apk
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies and build Windows installers
+        run: |
+          npm ci
+          npm install --no-save --save-dev electron electron-builder
+          npm run build
+          npx electron-builder --win --config electron-builder.yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: release-desktop/*.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies and build macOS DMG/APP
+        run: |
+          npm ci
+          npm install --no-save --save-dev electron electron-builder
+          npm run build
+          npx electron-builder --mac --config electron-builder.yml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos
+          path: |
+            release-desktop/*.dmg
+            release-desktop/*-mac*.zip
+
+  package-single-zip:
+    needs: [build-android, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Assemble RiveraVSPlayer-Instaladores.zip
+        run: |
+          mkdir -p RiveraVSPlayer-Instaladores/Android RiveraVSPlayer-Instaladores/Windows RiveraVSPlayer-Instaladores/macOS
+          cp -v artifacts/installer-android/* RiveraVSPlayer-Instaladores/Android/ || true
+          cp -v artifacts/installer-windows/* RiveraVSPlayer-Instaladores/Windows/ || true
+          cp -v artifacts/installer-macos/* RiveraVSPlayer-Instaladores/macOS/ || true
+          zip -r RiveraVSPlayer-Instaladores.zip RiveraVSPlayer-Instaladores/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiveraVSPlayer-Instaladores-ZIP
+          path: RiveraVSPlayer-Instaladores.zip
