@@ -154,6 +154,8 @@ export const TRANSLATIONS = {
       uploadSuccess: 'Adicionadas com sucesso!',
       uploadEmptyError:
         'Nenhum áudio encontrado na seleção. Tente selecionar a pasta ou escolher em lotes menores.',
+      uploadStorageError:
+        'Não foi possível salvar a música na memória do aparelho. Verifique o espaço livre ou as permissões de armazenamento.',
     },
   },
   en: {
@@ -309,6 +311,8 @@ export const TRANSLATIONS = {
       uploadSuccess: 'Added successfully!',
       uploadEmptyError:
         'No audio files were received from that selection. Try picking the folder or smaller batches.',
+      uploadStorageError:
+        'Could not save track into device storage. Please check available free space or app storage permissions.',
     },
   },
 } as const;

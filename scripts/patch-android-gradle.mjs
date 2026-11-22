@@ -116,6 +116,34 @@ function patchGradleProperties(propsPath) {
   }
 }
 
+function patchAndroidManifest(manifestPath) {
+  if (!fs.existsSync(manifestPath)) return;
+  const original = fs.readFileSync(manifestPath, 'utf8');
+  let updated = original;
+
+  const permissionsToAdd = [
+    '<uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />',
+    '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+  ];
+
+  const missing = permissionsToAdd.filter((perm) => {
+    const nameMatch = perm.match(/android:name="([^"]+)"/);
+    return nameMatch && !updated.includes(nameMatch[1]);
+  });
+
+  if (missing.length > 0 && updated.includes('<application')) {
+    updated = updated.replace(
+      /<application\b/,
+      `${missing.map((m) => `    ${m}`).join('\n')}\n\n    <application`
+    );
+  }
+
+  if (updated !== original) {
+    fs.writeFileSync(manifestPath, updated, 'utf8');
+    console.log(`[gradle-patch] Permissoes de audio atualizadas: ${path.relative(ROOT_DIR, manifestPath)}`);
+  }
+}
+
 function main() {
   if (!fs.existsSync(ANDROID_DIR)) {
     console.log('[gradle-patch] Pasta android/ nao encontrada ainda; nada a ajustar.');
@@ -135,6 +163,7 @@ function main() {
   }
 
   patchGradleProperties(path.join(ANDROID_DIR, 'gradle.properties'));
+  patchAndroidManifest(path.join(ANDROID_DIR, 'app', 'src', 'main', 'AndroidManifest.xml'));
 }
 
 main();

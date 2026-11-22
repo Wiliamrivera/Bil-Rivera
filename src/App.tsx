@@ -70,6 +70,11 @@ import {
   TrackPreset,
 } from './types/studio';
 import {
+  filterPlayableAudioFiles,
+  inferAudioMimeType,
+  materializeAudioBlob,
+} from './utils/audioFileFilter';
+import {
   createAudioContextSafe,
   decodeAudioDataSafe,
   isAndroidDevice,
@@ -87,9 +92,6 @@ const PALETTE_META_THEME_COLORS: Record<AppColorPalette, { dark: string; light: 
 
 type AppTab = 'studio' | 'setlists' | 'settings' | 'playlistTracks';
 const TAB_ORDER: Array<'studio' | 'setlists' | 'settings'> = ['studio', 'setlists', 'settings'];
-
-const IMPORT_AUDIO_EXT_RE =
-  /\.(mp3|wav|m4a|m4b|mp4|ogg|oga|opus|flac|aac|webm|wma|aiff|aif|caf|mpeg|mp2|3gp|amr)$/i;
 
 function readAudioDurationFast(file: File, timeoutMs = 1000): Promise<number> {
   return new Promise((resolve) => {
@@ -357,8 +359,7 @@ export default function App() {
   const exportCleanupTimerRef = useRef<number | null>(null);
   const exitNoticeTimerRef = useRef<number | null>(null);
   const exitArmedUntilRef = useRef<number>(0);
-  const isImportingRef = useRef<boolean>(isImporting);
-  isImportingRef.current = isImporting;
+  const importRunningRef = useRef<boolean>(false);
   const activeTabRef = useRef<AppTab>(activeTab);
   activeTabRef.current = activeTab;
   const pendingDeleteTrackRef = useRef<PracticeTrack | null>(pendingDeleteTrack);
@@ -1156,17 +1157,23 @@ export default function App() {
 
   const handleImportFiles = useCallback(
     async (files: FileList | File[]) => {
-      if (isImportingRef.current) return;
-      const audioFiles = Array.from(files).filter(
-        (file) => file.type.startsWith('audio/') || IMPORT_AUDIO_EXT_RE.test(file.name)
-      );
+      if (importRunningRef.current) return;
+      importRunningRef.current = true;
+
+      let audioFiles: File[] = [];
+      try {
+        audioFiles = await filterPlayableAudioFiles(Array.from(files));
+      } catch {
+        audioFiles = Array.from(files);
+      }
+
       if (audioFiles.length === 0) {
+        importRunningRef.current = false;
         setIsImporting(false);
         setImportStatus(null);
         showImportError(t.uploadModal.uploadEmptyError);
         return;
       }
-      isImportingRef.current = true;
 
       if (importSuccessTimerRef.current !== null) {
         window.clearTimeout(importSuccessTimerRef.current);
@@ -1195,9 +1202,10 @@ export default function App() {
       }
 
       let totalCreated = 0;
+      let storageWriteFailures = 0;
       let firstCreatedId: string | null = null;
       const runningTracksPool: PracticeTrack[] = [...tracksRef.current];
-      const BATCH_SIZE = 5;
+      const BATCH_SIZE = 4;
       let pendingTracks: PracticeTrack[] = [];
       let pendingBlobs: Array<{ id: string; blob: Blob }> = [];
 
@@ -1218,6 +1226,7 @@ export default function App() {
               await saveAudioBlobToDB(item.id, item.blob);
               savedIds.add(item.id);
             } catch (singleErr) {
+              storageWriteFailures += 1;
               console.warn('Could not persist track blob:', item.id, singleErr);
             }
           }
@@ -1289,20 +1298,24 @@ export default function App() {
             const durations = await Promise.all(
               slice.map((file) => readAudioDurationFast(file, 650).catch(() => 0))
             );
+            const blobs = await Promise.all(
+              slice.map((file) => materializeAudioBlob(file))
+            );
             const nowBase = Date.now();
             for (let j = 0; j < slice.length; j++) {
               const file = slice[j];
-              const cleanTitle = file.name.replace(/\.[^/.]+$/, '');
+              const cleanTitle =
+                file.name.replace(/\.[^/.]+$/, '') || `Track ${i + j + 1}`;
               const idx = i + j;
               const id = `local-${nowBase}-${idx}-${Math.random().toString(36).slice(2, 6)}`;
-              pendingBlobs.push({ id, blob: file });
+              pendingBlobs.push({ id, blob: blobs[j] });
               pendingTracks.push({
                 id,
                 title: cleanTitle,
                 artist: 'VS / Palco',
                 duration: durations[j] || 0,
                 source: 'local',
-                mimeType: file.type || 'audio/mpeg',
+                mimeType: inferAudioMimeType(file.name, file.type),
                 preset: {
                   speed: 1,
                   pitchSemitones: 0,
@@ -1331,7 +1344,8 @@ export default function App() {
         } else {
           for (let i = 0; i < audioFiles.length; i++) {
             const file = audioFiles[i];
-            const cleanTitle = file.name.replace(/\.[^/.]+$/, '');
+            const cleanTitle =
+              file.name.replace(/\.[^/.]+$/, '') || `Track ${i + 1}`;
             setImportStatus({
               current: i + 1,
               total: audioFiles.length,
@@ -1341,14 +1355,23 @@ export default function App() {
 
             try {
               const id = `local-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`;
+              const mimeType = inferAudioMimeType(file.name, file.type);
               let duration = 0;
               let bpm = 120;
               let beatOffset = 0;
+              let standaloneBlob: Blob;
 
-              if (ctx && file.size <= MAX_UPFRONT_DECODE_BYTES) {
+              let rawArrBuf: ArrayBuffer | null = null;
+              try {
+                rawArrBuf = await file.arrayBuffer();
+                standaloneBlob = new Blob([rawArrBuf], { type: mimeType });
+              } catch {
+                standaloneBlob = file;
+              }
+
+              if (ctx && rawArrBuf && file.size <= MAX_UPFRONT_DECODE_BYTES) {
                 try {
-                  const arrBuf = await file.arrayBuffer();
-                  const decoded = await decodeAudioDataSafe(ctx, arrBuf);
+                  const decoded = await decodeAudioDataSafe(ctx, rawArrBuf.slice(0));
                   duration = Number(decoded.duration.toFixed(2));
                   const detected = detectBpmAndOffset(decoded);
                   bpm = detected.bpm;
@@ -1360,14 +1383,14 @@ export default function App() {
                 duration = await readAudioDurationFast(file);
               }
 
-              pendingBlobs.push({ id, blob: file });
+              pendingBlobs.push({ id, blob: standaloneBlob });
               pendingTracks.push({
                 id,
                 title: cleanTitle,
                 artist: 'VS / Palco',
                 duration,
                 source: 'local',
-                mimeType: file.type || 'audio/mpeg',
+                mimeType,
                 preset: {
                   speed: 1,
                   pitchSemitones: 0,
@@ -1408,24 +1431,30 @@ export default function App() {
             setImportSuccessCount(null);
             importSuccessTimerRef.current = null;
           }, 2800);
+        } else if (storageWriteFailures > 0) {
+          showImportError(t.uploadModal.uploadStorageError);
         } else {
           showImportError(t.uploadModal.uploadEmptyError);
         }
       } catch (err) {
         console.error('Error importing audio:', err);
         if (totalCreated === 0) {
-          showImportError(t.uploadModal.uploadEmptyError);
+          showImportError(
+            storageWriteFailures > 0
+              ? t.uploadModal.uploadStorageError
+              : t.uploadModal.uploadEmptyError
+          );
         }
       } finally {
         if (ctx) {
           ctx.close().catch(() => {});
         }
-        isImportingRef.current = false;
+        importRunningRef.current = false;
         setIsImporting(false);
         setImportStatus(null);
       }
     },
-    [maxBlobCache, showImportError, t.uploadModal.uploadEmptyError]
+    [maxBlobCache, showImportError, t.uploadModal.uploadEmptyError, t.uploadModal.uploadStorageError]
   );
 
   // Setlist & Track Actions

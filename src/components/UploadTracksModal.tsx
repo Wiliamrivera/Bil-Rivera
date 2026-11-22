@@ -29,10 +29,12 @@ import {
   saveLastDirHandle,
   saveLastFolderName,
 } from '../storage/studioStorage';
+import { filterPlayableAudioFiles, isAudioFileSync } from '../utils/audioFileFilter';
 import {
   isAndroidDevice,
   isHandheldOrTablet,
   isIOSOrIPadOS,
+  isRunningInsideNativeShell,
 } from '../utils/platform';
 
 interface DirectoryHandleEntry {
@@ -65,12 +67,11 @@ export interface UploadTracksModalHandle {
   openAddMusicPicker: (options?: { isNewPlaylist?: boolean }) => void;
 }
 
-const AUDIO_EXT_RE = /\.(mp3|wav|m4a|m4b|mp4|ogg|oga|opus|flac|aac|webm|wma|aiff|aif|caf|mpeg|mp2|3gp|amr)$/i;
 const DESKTOP_AUDIO_ACCEPT =
   'audio/*,.mp3,.wav,.m4a,.m4b,.mp4,.ogg,.oga,.flac,.aac,.opus,.webm,.wma,.aiff,.aif,.caf,.mpeg,.mp2,.3gp,.amr';
 
 function isAudioFile(file: File): boolean {
-  return file.type.startsWith('audio/') || AUDIO_EXT_RE.test(file.name);
+  return isAudioFileSync(file);
 }
 
 function getFileExt(name: string): string {
@@ -178,9 +179,15 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
       typeof window !== 'undefined' && 'showDirectoryPicker' in window;
     const isTopLevelWindow =
       typeof window !== 'undefined' && window.self === window.top;
-    const canUseNativeDirectoryPicker = supportsDirectoryPicker && isTopLevelWindow;
+    const isNativeShell = isRunningInsideNativeShell();
+    const canUseNativeDirectoryPicker =
+      supportsDirectoryPicker && isTopLevelWindow && !isNativeShell;
     const supportsOpenFilePicker =
-      typeof window !== 'undefined' && 'showOpenFilePicker' in window && isTopLevelWindow;
+      !isMobile &&
+      !isNativeShell &&
+      typeof window !== 'undefined' &&
+      'showOpenFilePicker' in window &&
+      isTopLevelWindow;
     const supportsWebkitDirectory = useMemo(() => {
       if (typeof document === 'undefined' || isIOS) return false;
       const input = document.createElement('input');
@@ -304,6 +311,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
     const handlePickFiles = async (options?: { isNewPlaylist?: boolean }) => {
       setErrorMessage(null);
       if (supportsOpenFilePicker) {
+        let handles: Array<{ getFile: () => Promise<File> }> | null = null;
         try {
           const picker = (window as unknown as {
             showOpenFilePicker: (opts?: {
@@ -314,17 +322,13 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
             }) => Promise<Array<{ getFile: () => Promise<File> }>>;
           }).showOpenFilePicker;
 
-          // New playlist: Desktop starts in Documents, Mobile opens root/main folder.
-          // Upload Música / existing playlist: remember last folder automatically on both Android and Desktop.
-          const handles = await picker({
+          // New playlist: Desktop starts in Documents.
+          // Upload Música / existing playlist: remember last folder automatically.
+          handles = await picker({
             multiple: true,
             ...(options?.isNewPlaylist
-              ? isMobile
-                ? {}
-                : { startIn: 'documents' }
-              : isMobile
-                ? { id: 'rivera-mobile-files' }
-                : { id: 'rivera-desktop-files', startIn: 'documents' }),
+              ? { startIn: 'documents' }
+              : { id: 'rivera-desktop-files', startIn: 'documents' }),
             types: [
               {
                 description: 'Audio Files',
@@ -354,36 +358,43 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
               },
             ],
           });
+        } catch (err) {
+          const name = (err as { name?: string })?.name;
+          if (name === 'AbortError') return;
+          handles = null;
+        }
 
+        if (handles) {
           if (handles.length === 0) return;
 
-          // Immediately show circular loading indicator before reading large handle batches
           onPreparingImport?.(handles.length);
           onClose();
           await new Promise<void>((r) => window.setTimeout(r, 0));
 
-          const resolvedFiles: File[] = [];
-          const chunkSize = 10;
-          for (let i = 0; i < handles.length; i += chunkSize) {
-            const slice = handles.slice(i, i + chunkSize);
-            const settled = await Promise.allSettled(slice.map((h) => h.getFile()));
-            for (const item of settled) {
-              if (item.status === 'fulfilled' && item.value) {
-                resolvedFiles.push(item.value);
+          try {
+            const resolvedFiles: File[] = [];
+            const chunkSize = 10;
+            for (let i = 0; i < handles.length; i += chunkSize) {
+              const slice = handles.slice(i, i + chunkSize);
+              const settled = await Promise.allSettled(slice.map((h) => h.getFile()));
+              for (const item of settled) {
+                if (item.status === 'fulfilled' && item.value) {
+                  resolvedFiles.push(item.value);
+                }
               }
             }
-          }
 
-          const audioOnly = resolvedFiles.filter(isAudioFile);
-          if (audioOnly.length > 0) {
-            await onImportFilesRef.current(audioOnly);
-          } else {
+            const audioOnly = await filterPlayableAudioFiles(resolvedFiles);
+            if (audioOnly.length > 0) {
+              await onImportFilesRef.current(audioOnly);
+            } else {
+              onImportEmpty?.(t.uploadModal.uploadEmptyError);
+            }
+          } catch (err) {
+            console.warn('Failed to import picked files:', err);
             onImportEmpty?.(t.uploadModal.uploadEmptyError);
           }
           return;
-        } catch (err) {
-          const name = (err as { name?: string })?.name;
-          if (name === 'AbortError') return;
         }
       }
       fileInputRef.current?.click();
@@ -519,7 +530,9 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
           type="file"
           multiple
           accept={isAndroid ? undefined : DESKTOP_AUDIO_ACCEPT}
-          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          className="fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none"
           onChange={async (e) => {
             const inputEl = e.currentTarget;
             const files = inputEl.files ? Array.from(inputEl.files) : [];
@@ -530,12 +543,15 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
             await new Promise<void>((r) => window.setTimeout(r, 0));
 
             try {
-              const audioOnly = files.filter(isAudioFile);
+              const audioOnly = await filterPlayableAudioFiles(files);
               if (audioOnly.length > 0) {
                 await onImportFilesRef.current(audioOnly);
               } else {
                 onImportEmpty?.(t.uploadModal.uploadEmptyError);
               }
+            } catch (err) {
+              console.warn('Failed to process selected files:', err);
+              onImportEmpty?.(t.uploadModal.uploadEmptyError);
             } finally {
               inputEl.value = '';
             }
@@ -547,7 +563,9 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
           multiple
           // @ts-expect-error webkitdirectory is supported on Chromium/WebKit browsers
           webkitdirectory=""
-          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          className="fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none"
           onChange={(e) => {
             const inputEl = e.currentTarget;
             const files = inputEl.files ? Array.from(inputEl.files) : [];
