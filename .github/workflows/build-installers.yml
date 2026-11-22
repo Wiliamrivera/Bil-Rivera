@@ -21,6 +21,16 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      - name: Cache Gradle packages and wrapper
+        id: gradle-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-${{ hashFiles('package.json', 'capacitor.config.ts') }}
+          restore-keys: |
+            gradle-android-
       - name: Install dependencies and configure Capacitor Android
         run: |
           npm install --legacy-peer-deps
@@ -28,11 +38,42 @@ jobs:
           npm run build
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
+          node scripts/patch-android-gradle.mjs
       - name: Build and sign installable Android APK
         run: |
           mkdir -p out-android
           cd android
-          ./gradlew assembleRelease
+          chmod +x gradlew
+
+          BUILD_OK=0
+          if [ "${{ steps.gradle-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "Gradle cache aquecido: tentando build --offline primeiro..."
+            if ./gradlew assembleRelease --offline --no-daemon --max-workers=2; then
+              BUILD_OK=1
+            fi
+          fi
+
+          if [ "$BUILD_OK" -eq 0 ]; then
+            for ATTEMPT in 1 2 3; do
+              echo "Tentativa Gradle $ATTEMPT/3..."
+              EXTRA_FLAG=""
+              if [ "$ATTEMPT" -eq 3 ]; then
+                EXTRA_FLAG="--refresh-dependencies"
+              fi
+              if ./gradlew assembleRelease --no-daemon --max-workers=2 $EXTRA_FLAG; then
+                BUILD_OK=1
+                break
+              fi
+              echo "Build falhou (possivel limite HTTP 429). Aguardando 20s antes da proxima tentativa..."
+              sleep 20
+            done
+          fi
+
+          if [ "$BUILD_OK" -eq 0 ]; then
+            echo "Erro: assembleRelease falhou apos 3 tentativas."
+            exit 1
+          fi
+
           UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
           BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$UNSIGNED_APK" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ] && [ -x "$BUILD_TOOLS_DIR/zipalign" ]; then
@@ -45,7 +86,7 @@ jobs:
               --ks-key-alias rivera --ks-pass pass:rivera1234 --key-pass pass:rivera1234 \
               --out ../out-android/RiveraVSPlayer-Android.apk /tmp/aligned.apk
           else
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug --no-daemon --max-workers=2
             DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
             cp -v "$DEBUG_APK" ../out-android/RiveraVSPlayer-Android.apk
           fi

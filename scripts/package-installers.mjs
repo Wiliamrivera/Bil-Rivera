@@ -84,9 +84,10 @@ function buildLocalAndroidIfReady() {
 
   log('Sincronizando Capacitor Android (npx cap sync android)...');
   runCommand('npx', ['cap', 'sync', 'android']);
+  runCommand('node', ['scripts/patch-android-gradle.mjs']);
 
   log('Compilando APK Android (assembleRelease)...');
-  const ok = runCommand(gradlew, ['assembleRelease'], androidDir);
+  const ok = runCommand(gradlew, ['assembleRelease', '--no-daemon', '--max-workers=2'], androidDir);
   if (!ok) {
     log('Aviso: compilacao Gradle Android falhou neste host.');
     return [];
