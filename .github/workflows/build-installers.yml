@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
@@ -14,26 +17,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-      - name: Install dependencies and Capacitor Android
+          java-version: 21
+      - name: Install dependencies and configure Capacitor Android
         run: |
-          npm ci
+          npm install
           npm install --no-save @capacitor/core @capacitor/cli @capacitor/android
           npm run build
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
-      - name: Build release APK (unsigned/debuggable release artifact)
-        run: |
-          cd android
-          ./gradlew assembleRelease
-      - name: Stage Android output
+      - name: Build and sign installable Android APK
         run: |
           mkdir -p out-android
-          find android/app/build/outputs/apk -name "*.apk" -exec cp {} out-android/ \;
+          cd android
+          ./gradlew assembleRelease
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$UNSIGNED_APK" ] && [ -x "$BUILD_TOOLS_DIR/apksigner" ] && [ -x "$BUILD_TOOLS_DIR/zipalign" ]; then
+            keytool -genkeypair -v -keystore /tmp/rivera-release.jks -alias rivera \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass rivera1234 -keypass rivera1234 \
+              -dname "CN=Rivera VS Player, OU=Audio, O=Rivera, L=BR, S=SP, C=BR"
+            "$BUILD_TOOLS_DIR/zipalign" -v -p 4 "$UNSIGNED_APK" /tmp/aligned.apk
+            "$BUILD_TOOLS_DIR/apksigner" sign --ks /tmp/rivera-release.jks \
+              --ks-key-alias rivera --ks-pass pass:rivera1234 --key-pass pass:rivera1234 \
+              --out ../out-android/RiveraVSPlayer-Android.apk /tmp/aligned.apk
+          else
+            ./gradlew assembleDebug
+            DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+            cp -v "$DEBUG_APK" ../out-android/RiveraVSPlayer-Android.apk
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: installer-android
@@ -41,16 +56,17 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - name: Install dependencies and build Windows installers
+      - name: Install dependencies and build Windows installers (.exe)
         run: |
-          npm ci
-          npm install --no-save --save-dev electron electron-builder
+          npm install
+          npm install --no-save electron electron-builder
           npm run build
           npx electron-builder --win --config electron-builder.yml
       - uses: actions/upload-artifact@v4
@@ -60,16 +76,17 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - name: Install dependencies and build macOS DMG/APP
         run: |
-          npm ci
-          npm install --no-save --save-dev electron electron-builder
+          npm install
+          npm install --no-save electron electron-builder
           npm run build
           npx electron-builder --mac --config electron-builder.yml
       - uses: actions/upload-artifact@v4
@@ -93,8 +110,36 @@ jobs:
           cp -v artifacts/installer-android/* RiveraVSPlayer-Instaladores/Android/ || true
           cp -v artifacts/installer-windows/* RiveraVSPlayer-Instaladores/Windows/ || true
           cp -v artifacts/installer-macos/* RiveraVSPlayer-Instaladores/macOS/ || true
+          cat << 'EOF' > RiveraVSPlayer-Instaladores/LEIA-ME.txt
+          Rivera V/S Player - Instaladores Offline Multiplataforma
+          =========================================================
+          Escolha a pasta do seu dispositivo:
+          - Android/: instale o arquivo .apk no celular ou tablet Android.
+          - Windows/: execute o instalador .exe (ou a versao portable .exe) no Windows.
+          - macOS/: abra o arquivo .dmg (ou extraia o .app) no Mac.
+
+          Depois de instalado, funciona 100% offline sem precisar de internet.
+          EOF
           zip -r RiveraVSPlayer-Instaladores.zip RiveraVSPlayer-Instaladores/
       - uses: actions/upload-artifact@v4
         with:
           name: RiveraVSPlayer-Instaladores-ZIP
           path: RiveraVSPlayer-Instaladores.zip
+      - name: Publish download files to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+            TAG_NAME="v${VERSION}"
+          fi
+          gh release delete "$TAG_NAME" --yes 2>/dev/null || true
+          gh release create "$TAG_NAME" \
+            --target "${GITHUB_SHA}" \
+            RiveraVSPlayer-Instaladores.zip \
+            artifacts/installer-android/* \
+            artifacts/installer-windows/* \
+            artifacts/installer-macos/* \
+            --title "Rivera V/S Player $TAG_NAME (Instaladores Offline)" \
+            --notes "Pacote completo multiplataforma (Android .apk, Windows .exe, macOS .dmg/.app) pronto para uso 100% offline."
