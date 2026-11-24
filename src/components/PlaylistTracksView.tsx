@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   ArrowDownAZ,
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   Volume2,
 } from 'lucide-react';
 import { formatTimecode } from '../audio/audioUtils';
+import { useTrackPointerReorder } from '../hooks/useTrackPointerReorder';
 import { TranslationDict } from '../i18n/translations';
 import { PracticeTrack } from '../types/studio';
 
@@ -57,154 +58,25 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
   onPrewarmTrack,
   onPrefetchTracks,
 }) => {
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
+  const {
+    draggingId,
+    displayTracks,
+    rowRefs,
+    registerRowRef,
+    startHold,
+    clearHoldTimer,
+    isDragBlockingClick,
+  } = useTrackPointerReorder({
+    tracks,
+    isActive: true,
+    onReorderTracks,
+  });
+
   const visibleTrackIdsRef = useRef<Set<string>>(new Set());
   const visiblePrefetchCancelRef = useRef<(() => void) | null>(null);
   const visiblePrefetchTimerRef = useRef<number | null>(null);
   const onPrefetchTracksRef = useRef(onPrefetchTracks);
   onPrefetchTracksRef.current = onPrefetchTracks;
-
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const holdTimerRef = useRef<number | null>(null);
-  const pointerStateRef = useRef<{
-    trackId: string;
-    startX: number;
-    startY: number;
-    pointerId: number;
-  } | null>(null);
-  const draggingIdRef = useRef<string | null>(null);
-  const dragOrderIdsRef = useRef<string[] | null>(null);
-  const justDraggedRef = useRef<boolean>(false);
-  const justDraggedTimerRef = useRef<number | null>(null);
-  const tracksRef = useRef(tracks);
-  tracksRef.current = tracks;
-  const onReorderRef = useRef(onReorderTracks);
-  onReorderRef.current = onReorderTracks;
-
-  draggingIdRef.current = draggingId;
-  dragOrderIdsRef.current = dragOrderIds;
-
-  const displayTracks = React.useMemo(() => {
-    if (!dragOrderIds) return tracks;
-    const map = new Map(tracks.map((tr) => [tr.id, tr]));
-    return dragOrderIds.map((id) => map.get(id)).filter((tr): tr is PracticeTrack => Boolean(tr));
-  }, [dragOrderIds, tracks]);
-
-  const clearHoldTimer = () => {
-    if (holdTimerRef.current !== null) {
-      window.clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    const handlePointerMove = (e: PointerEvent) => {
-      const pending = pointerStateRef.current;
-      const activeDragId = draggingIdRef.current;
-
-      if (!activeDragId && pending) {
-        if (e.pointerId !== pending.pointerId) return;
-        const dx = Math.abs(e.clientX - pending.startX);
-        const dy = Math.abs(e.clientY - pending.startY);
-        if (dx > 8 || dy > 8) {
-          clearHoldTimer();
-          pointerStateRef.current = null;
-        }
-        return;
-      }
-
-      if (!activeDragId) return;
-      if (pending && e.pointerId !== pending.pointerId) return;
-
-      const currentOrder = dragOrderIdsRef.current;
-      if (!currentOrder || currentOrder.length < 2) return;
-
-      const currentIdx = currentOrder.indexOf(activeDragId);
-      if (currentIdx === -1) return;
-
-      const y = e.clientY;
-      let targetIdx = currentIdx;
-
-      for (let i = 0; i < currentOrder.length; i++) {
-        const id = currentOrder[i];
-        if (id === activeDragId) continue;
-        const el = rowRefs.current.get(id);
-        if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        const midY = (rect.top + rect.bottom) / 2;
-        if (i < currentIdx && y < midY) {
-          targetIdx = i;
-          break;
-        }
-        if (i > currentIdx && y > midY) {
-          targetIdx = i;
-        }
-      }
-
-      if (targetIdx !== currentIdx) {
-        const nextOrder = [...currentOrder];
-        nextOrder.splice(currentIdx, 1);
-        nextOrder.splice(targetIdx, 0, activeDragId);
-        dragOrderIdsRef.current = nextOrder;
-        setDragOrderIds(nextOrder);
-      }
-    };
-
-    const finishDrag = (e: PointerEvent) => {
-      const pending = pointerStateRef.current;
-      if (pending && e.pointerId !== pending.pointerId) return;
-
-      clearHoldTimer();
-      pointerStateRef.current = null;
-
-      if (draggingIdRef.current) {
-        const finalOrder = dragOrderIdsRef.current;
-        if (finalOrder && finalOrder.length > 0) {
-          onReorderRef.current(finalOrder);
-        }
-        justDraggedRef.current = true;
-        if (justDraggedTimerRef.current !== null) {
-          window.clearTimeout(justDraggedTimerRef.current);
-        }
-        justDraggedTimerRef.current = window.setTimeout(() => {
-          justDraggedRef.current = false;
-          justDraggedTimerRef.current = null;
-        }, 120);
-      }
-
-      draggingIdRef.current = null;
-      dragOrderIdsRef.current = null;
-      setDraggingId(null);
-      setDragOrderIds(null);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', finishDrag);
-    window.addEventListener('pointercancel', finishDrag);
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', finishDrag);
-      window.removeEventListener('pointercancel', finishDrag);
-      clearHoldTimer();
-      if (justDraggedTimerRef.current !== null) {
-        window.clearTimeout(justDraggedTimerRef.current);
-        justDraggedTimerRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!draggingId) return;
-    const preventScrollWhileDragging = (e: TouchEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('touchmove', preventScrollWhileDragging, { passive: false });
-    return () => {
-      window.removeEventListener('touchmove', preventScrollWhileDragging);
-    };
-  }, [draggingId]);
 
   // Pre-decode visible rows when scrolling through large playlists (e.g. "Todas as Músicas")
   useEffect(() => {
@@ -256,30 +128,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
       visiblePrefetchCancelRef.current?.();
       visiblePrefetchCancelRef.current = null;
     };
-  }, [tracks]);
-
-  const startHold = (e: React.PointerEvent, trackId: string, delayMs = 300) => {
-    if (e.button !== 0 && e.pointerType === 'mouse') return;
-    clearHoldTimer();
-    pointerStateRef.current = {
-      trackId,
-      startX: e.clientX,
-      startY: e.clientY,
-      pointerId: e.pointerId,
-    };
-
-    holdTimerRef.current = window.setTimeout(() => {
-      if (!pointerStateRef.current || pointerStateRef.current.trackId !== trackId) return;
-      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-        navigator.vibrate(25);
-      }
-      const initialIds = tracksRef.current.map((tr) => tr.id);
-      draggingIdRef.current = trackId;
-      dragOrderIdsRef.current = initialIds;
-      setDraggingId(trackId);
-      setDragOrderIds(initialIds);
-    }, delayMs);
-  };
+  }, [rowRefs, tracks]);
 
   return (
     <div className="flex flex-col gap-3 max-w-2xl mx-auto">
@@ -386,10 +235,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
                 <div
                   key={tr.id}
                   data-track-id={tr.id}
-                  ref={(el) => {
-                    if (el) rowRefs.current.set(tr.id, el);
-                    else rowRefs.current.delete(tr.id);
-                  }}
+                  ref={(el) => registerRowRef(tr.id, el)}
                   onMouseEnter={() => onPrewarmTrack?.(tr.id)}
                   onPointerDown={(e) => {
                     onPrewarmTrack?.(tr.id);
@@ -397,7 +243,7 @@ export const PlaylistTracksView: React.FC<PlaylistTracksViewProps> = React.memo(
                   }}
                   onContextMenu={(e) => e.preventDefault()}
                   onClick={() => {
-                    if (justDraggedRef.current || draggingIdRef.current) return;
+                    if (isDragBlockingClick()) return;
                     onSelectTrack(tr.id);
                   }}
                   className={`min-h-[56px] px-3 py-2.5 flex items-center gap-2.5 transition-colors select-none cursor-pointer ${

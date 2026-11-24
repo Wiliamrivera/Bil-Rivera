@@ -20,7 +20,9 @@
     <link rel="preload" as="image" href="/logo-vs-v12.png" />
     <script>
       try {
-        var rawSettings = localStorage.getItem('riffforge_settings_v1');
+        var rawSettings =
+          localStorage.getItem('rivera_vs_settings_v1') ||
+          localStorage.getItem('riffforge_settings_v1');
         if (rawSettings) {
           var parsedSettings = JSON.parse(rawSettings);
           var palette = parsedSettings && parsedSettings.colorPalette;

@@ -10,6 +10,8 @@ export const TRANSLATIONS = {
     importAudio: 'Upload Música',
     exportAudio: 'Exportar Áudio',
     exporting: 'Exportando...',
+    exportFailed: 'Não foi possível exportar o áudio em WAV. Tente novamente.',
+    exportSaved: 'Áudio salvo na pasta Downloads!',
     saveModalTitle: 'Áudio Pronto para Salvar',
     saveChooseFolder: 'Escolher Pasta para Salvar',
     saveShareApps: 'Compartilhar / Escolher App (WhatsApp, Pasta...)',
@@ -85,6 +87,9 @@ export const TRANSLATIONS = {
       paletteMint: 'Menta',
       paletteCobalt: 'Cobalto',
       resetAll: 'Restaurar Padrões',
+      privacyPolicyLabel: 'Política de Privacidade',
+      privacySummary:
+        'O Rivera V/S Player funciona 100% offline. Não coletamos dados pessoais, áudios ou métricas de uso. Suas músicas ficam salvas apenas na memória do seu dispositivo.',
     },
     pwa: {
       sectionTitle: 'Instalar App no Dispositivo (Offline)',
@@ -128,6 +133,21 @@ export const TRANSLATIONS = {
       promoSiteButton: 'Abrir Site de Divulgação',
       promoSiteCopy: 'Copiar Link do Site',
       promoSiteCopied: 'Link do site de divulgação copiado!',
+      directApkBadge: 'Link direto APK / App',
+      directLinkSetupHint:
+        'Você está na prévia do AI Studio. Para compartilhar o link direto do Rivera V/S Player no Android (sem redirecionar para o AI Studio), cole abaixo o link do GitHub Releases, do arquivo .apk, da Play Store ou do domínio onde o app está publicado:',
+      directLinkPlaceholder: 'https://github.com/usuario/repo ou link .apk',
+      directLinkSave: 'Salvar Link',
+      directLinkEdit: 'Alterar link',
+      directLinkCancel: 'Cancelar',
+      directLinkAiStudioError:
+        'Esse link é do AI Studio. Cole o link direto do APK, GitHub Releases, Play Store ou domínio publicado do app.',
+      directLinkInvalidError: 'Informe uma URL válida começando com https://.',
+      directLinkGithubHint:
+        'Dica: se colar o link do seu repositório GitHub, o link direto do instalador RiveraVSPlayer-Android.apk é gerado automaticamente.',
+      shareNativeTitle: 'Compartilhar Rivera V/S Player',
+      shareNativeDesc:
+        'Envie o link direto de instalação do Rivera V/S Player para outros músicos no Android.',
     },
     uploadModal: {
       title: 'Enviar Músicas',
@@ -177,6 +197,8 @@ export const TRANSLATIONS = {
     importAudio: 'Upload Track',
     exportAudio: 'Export Audio',
     exporting: 'Exporting...',
+    exportFailed: 'Could not export WAV audio. Please try again.',
+    exportSaved: 'Audio saved to Downloads!',
     saveModalTitle: 'Audio Ready to Save',
     saveChooseFolder: 'Choose Folder to Save',
     saveShareApps: 'Share / Choose App (WhatsApp, Files...)',
@@ -252,6 +274,9 @@ export const TRANSLATIONS = {
       paletteMint: 'Mint',
       paletteCobalt: 'Cobalt',
       resetAll: 'Reset Defaults',
+      privacyPolicyLabel: 'Privacy Policy',
+      privacySummary:
+        'Rivera V/S Player runs 100% offline. We do not collect personal data, audio files, or usage telemetry. All imported tracks remain strictly inside your device local storage.',
     },
     pwa: {
       sectionTitle: 'Install App (Offline)',
@@ -293,6 +318,21 @@ export const TRANSLATIONS = {
       promoSiteButton: 'Open Promotional Website',
       promoSiteCopy: 'Copy Website Link',
       promoSiteCopied: 'Promotional website link copied!',
+      directApkBadge: 'Direct APK / App link',
+      directLinkSetupHint:
+        'You are running inside the AI Studio preview. To share the direct Rivera V/S Player Android install link (without sending users to AI Studio), paste your GitHub Releases URL, direct .apk link, Play Store link, or public app domain below:',
+      directLinkPlaceholder: 'https://github.com/user/repo or .apk URL',
+      directLinkSave: 'Save Link',
+      directLinkEdit: 'Edit link',
+      directLinkCancel: 'Cancel',
+      directLinkAiStudioError:
+        'That is an AI Studio URL. Paste a direct .apk, GitHub Releases, Play Store, or published app URL instead.',
+      directLinkInvalidError: 'Please enter a valid URL starting with https://.',
+      directLinkGithubHint:
+        'Tip: pasting your GitHub repository URL automatically builds the direct RiveraVSPlayer-Android.apk download link.',
+      shareNativeTitle: 'Share Rivera V/S Player',
+      shareNativeDesc:
+        'Send the direct Rivera V/S Player install link to your bandmates on Android.',
     },
     uploadModal: {
       title: 'Upload Tracks',

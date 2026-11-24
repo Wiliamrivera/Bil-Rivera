@@ -11,6 +11,7 @@ import {
   playSilentAudioUnlock,
   resumeAudioContextSafe,
 } from '../utils/platform';
+import { setPlaybackKeepScreenOn } from '../utils/nativeBridge';
 
 interface CachedDecodedAudio {
   buffer: AudioBuffer;
@@ -18,6 +19,13 @@ interface CachedDecodedAudio {
   ch0: Float32Array;
   ch1: Float32Array | null;
   byteSize: number;
+}
+
+function cloneWorkletChannels(entry: CachedDecodedAudio) {
+  const ch0Copy = entry.ch0.slice();
+  const ch1Copy = entry.ch1 ? entry.ch1.slice() : null;
+  const transfer: Transferable[] = ch1Copy ? [ch0Copy.buffer, ch1Copy.buffer] : [ch0Copy.buffer];
+  return { ch0Copy, ch1Copy, transfer };
 }
 
 interface UsePracticeAudioParams {
@@ -160,6 +168,38 @@ export function usePracticeAudio({
     });
   }, []);
 
+  const applyDecodedEntryMeta = useCallback((entry: CachedDecodedAudio) => {
+    audioBufferRef.current = entry.buffer;
+    sampleRateRef.current = entry.buffer.sampleRate;
+    durationRef.current = entry.buffer.duration;
+    setAudioBuffer(entry.buffer);
+    setDuration(entry.buffer.duration);
+    setPeaks(entry.peaks);
+  }, []);
+
+  const postLoadToWorklet = useCallback(
+    (id: string, entry: CachedDecodedAudio, startSample: number) => {
+      const worklet = workletNodeRef.current;
+      if (!worklet) return false;
+      const { ch0Copy, ch1Copy, transfer } = cloneWorkletChannels(entry);
+
+      worklet.port.postMessage(
+        {
+          type: 'load',
+          id,
+          ch0: ch0Copy,
+          ch1: ch1Copy,
+          sampleRate: entry.buffer.sampleRate,
+          startSample,
+        },
+        transfer
+      );
+      loadedWorkletIdRef.current = id;
+      return true;
+    },
+    []
+  );
+
   const startFallbackNode = useCallback(
     (ctx: AudioContext, buffer: AudioBuffer, offsetSec: number) => {
       stopFallbackSource();
@@ -290,8 +330,8 @@ export function usePracticeAudio({
 
             workletNodeRef.current = worklet;
             worklet.connect(splitter);
-          } catch (err) {
-            console.warn('AudioWorklet unavailable, using fallback AudioBufferSource:', err);
+          } catch {
+            // AudioWorklet unavailable; fallback AudioBufferSource handles playback automatically
           } finally {
             URL.revokeObjectURL(wUrl);
             if (workletUrlRef.current === wUrl) {
@@ -383,8 +423,7 @@ export function usePracticeAudio({
           };
           cacheDecodedEntry(id, entry);
           return entry;
-        } catch (err) {
-          console.error('Failed to decode audio:', err);
+        } catch {
           return null;
         } finally {
           inflightDecodeRef.current.delete(id);
@@ -416,15 +455,52 @@ export function usePracticeAudio({
     (ids: string[]) => {
       if (ids.length === 0) return () => {};
       let cancelled = false;
+      let cancelIdle: (() => void) | null = null;
+      let waitTimerId: number | null = null;
+      let resolveWaitTimer: (() => void) | null = null;
+
+      const waitForDelay = (ms: number) =>
+        new Promise<void>((resolve) => {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          resolveWaitTimer = resolve;
+          waitTimerId = window.setTimeout(() => {
+            waitTimerId = null;
+            resolveWaitTimer = null;
+            resolve();
+          }, ms);
+        });
+
       const waitForIdle = () =>
         new Promise<void>((resolve) => {
-          const ric = (window as unknown as {
+          if (cancelled) {
+            resolve();
+            return;
+          }
+          const winCompat = window as unknown as {
             requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-          }).requestIdleCallback;
-          if (typeof ric === 'function') {
-            ric(() => resolve(), { timeout: 120 });
+            cancelIdleCallback?: (id: number) => void;
+          };
+          if (typeof winCompat.requestIdleCallback === 'function') {
+            const idleId = winCompat.requestIdleCallback(() => {
+              cancelIdle = null;
+              resolve();
+            }, { timeout: 120 });
+            cancelIdle = () => {
+              winCompat.cancelIdleCallback?.(idleId);
+              resolve();
+            };
           } else {
-            window.setTimeout(resolve, 20);
+            const timerId = window.setTimeout(() => {
+              cancelIdle = null;
+              resolve();
+            }, 20);
+            cancelIdle = () => {
+              window.clearTimeout(timerId);
+              resolve();
+            };
           }
         });
       const run = async () => {
@@ -436,7 +512,7 @@ export function usePracticeAudio({
             !cancelled &&
             (isLoadingAudioRef.current || (isPlayingRef.current && currentTimeRef.current < 0.6))
           ) {
-            await new Promise<void>((r) => window.setTimeout(r, 150));
+            await waitForDelay(150);
           }
           if (cancelled) break;
           if (decodedCacheRef.current.has(id) || inflightDecodeRef.current.has(id)) continue;
@@ -448,6 +524,14 @@ export function usePracticeAudio({
       run().catch(() => {});
       return () => {
         cancelled = true;
+        if (waitTimerId !== null) {
+          window.clearTimeout(waitTimerId);
+          waitTimerId = null;
+        }
+        resolveWaitTimer?.();
+        resolveWaitTimer = null;
+        cancelIdle?.();
+        cancelIdle = null;
       };
     },
     [ensureAudioGraph, getOrDecodeTrack]
@@ -513,12 +597,7 @@ export function usePracticeAudio({
       if (cachedEntry) {
         decodedCacheRef.current.delete(trackId);
         decodedCacheRef.current.set(trackId, cachedEntry);
-        audioBufferRef.current = cachedEntry.buffer;
-        sampleRateRef.current = cachedEntry.buffer.sampleRate;
-        durationRef.current = cachedEntry.buffer.duration;
-        setAudioBuffer(cachedEntry.buffer);
-        setDuration(cachedEntry.buffer.duration);
-        setPeaks(cachedEntry.peaks);
+        applyDecodedEntryMeta(cachedEntry);
         setIsLoadingAudio(false);
         currentTimeRef.current = 0;
         pendingUiTimeRef.current = null;
@@ -536,12 +615,7 @@ export function usePracticeAudio({
         getOrDecodeTrack(trackId, existingCtx)
           .then((entry) => {
             if (cancelled || !entry) return;
-            audioBufferRef.current = entry.buffer;
-            sampleRateRef.current = entry.buffer.sampleRate;
-            durationRef.current = entry.buffer.duration;
-            setAudioBuffer(entry.buffer);
-            setDuration(entry.buffer.duration);
-            setPeaks(entry.peaks);
+            applyDecodedEntryMeta(entry);
             syncWorkletParams(presetRef.current);
           })
           .finally(() => {
@@ -592,12 +666,7 @@ export function usePracticeAudio({
       decodedCacheRef.current.delete(trackId);
       decodedCacheRef.current.set(trackId, cachedEntry);
 
-      audioBufferRef.current = cachedEntry.buffer;
-      sampleRateRef.current = cachedEntry.buffer.sampleRate;
-      durationRef.current = cachedEntry.buffer.duration;
-      setAudioBuffer(cachedEntry.buffer);
-      setDuration(cachedEntry.buffer.duration);
-      setPeaks(cachedEntry.peaks);
+      applyDecodedEntryMeta(cachedEntry);
       setIsLoadingAudio(false);
       currentTimeRef.current = 0;
       pendingUiTimeRef.current = null;
@@ -624,7 +693,7 @@ export function usePracticeAudio({
     }
 
     const applyLoadedEntry = (ctx: AudioContext, entry: CachedDecodedAudio) => {
-      const { buffer: decoded, peaks: nextPeaks, ch0, ch1 } = entry;
+      const { buffer: decoded } = entry;
       audioBufferRef.current = decoded;
       sampleRateRef.current = decoded.sampleRate;
       durationRef.current = decoded.duration;
@@ -645,26 +714,10 @@ export function usePracticeAudio({
       }
 
       // Dispatch audio engine start FIRST before React UI state updates for lowest click-to-sound latency
-      if (workletNodeRef.current) {
-        const ch0Copy = ch0.slice();
-        const ch1Copy = ch1 ? ch1.slice() : null;
-        const transfer: Transferable[] = ch1Copy ? [ch0Copy.buffer, ch1Copy.buffer] : [ch0Copy.buffer];
-
-        workletNodeRef.current.port.postMessage(
-          {
-            type: 'load',
-            id: trackId,
-            ch0: ch0Copy,
-            ch1: ch1Copy,
-            sampleRate: decoded.sampleRate,
-            startSample: Math.round(startPos * decoded.sampleRate),
-          },
-          transfer
-        );
-        loadedWorkletIdRef.current = trackId;
+      if (postLoadToWorklet(trackId, entry, Math.round(startPos * decoded.sampleRate))) {
         syncWorkletParams(presetRef.current);
 
-        if (shouldAutoPlay) {
+        if (shouldAutoPlay && workletNodeRef.current) {
           if (ctx.state !== 'running') {
             resumeAudioContextSafe(ctx).catch(() => {});
           }
@@ -687,9 +740,7 @@ export function usePracticeAudio({
         setIsPlaying(false);
       }
 
-      setAudioBuffer(decoded);
-      setDuration(decoded.duration);
-      setPeaks(nextPeaks);
+      applyDecodedEntryMeta(entry);
       setCurrentTime(startPos);
     };
 
@@ -723,9 +774,8 @@ export function usePracticeAudio({
         }
 
         applyLoadedEntry(ctx, entry);
-      } catch (err) {
+      } catch {
         if (autoPlayOnLoadRef) autoPlayOnLoadRef.current = false;
-        console.error('Failed to load audio track:', err);
       } finally {
         if (!cancelled) setIsLoadingAudio(false);
       }
@@ -740,8 +790,10 @@ export function usePracticeAudio({
     trackId,
     deferLoad,
     autoPlayOnLoadRef,
+    applyDecodedEntryMeta,
     ensureAudioGraph,
     getOrDecodeTrack,
+    postLoadToWorklet,
     startFallbackNode,
     stopFallbackSource,
     syncWorkletParams,
@@ -770,9 +822,7 @@ export function usePracticeAudio({
 
         const worklet = workletNodeRef.current;
         if (worklet && stagedWorkletIdRef.current !== nextTrackId) {
-          const ch0Copy = nextEntry.ch0.slice();
-          const ch1Copy = nextEntry.ch1 ? nextEntry.ch1.slice() : null;
-          const transfer: Transferable[] = ch1Copy ? [ch0Copy.buffer, ch1Copy.buffer] : [ch0Copy.buffer];
+          const { ch0Copy, ch1Copy, transfer } = cloneWorkletChannels(nextEntry);
           const np = nextPresetRef.current;
 
           worklet.port.postMessage(
@@ -869,7 +919,7 @@ export function usePracticeAudio({
   );
 
   const play = useCallback(
-    async (_unusedCountInBars?: number, startAtSec?: number) => {
+    async (startAtSec?: number) => {
       const targetTrackId = activeTrackIdRef.current;
       const existingCtx = audioCtxRef.current;
       const readyWorklet = workletNodeRef.current;
@@ -920,35 +970,14 @@ export function usePracticeAudio({
         ) {
           const entry = await getOrDecodeTrack(targetTrackId, ctx);
           if (!entry || activeTrackIdRef.current !== targetTrackId) return;
-          audioBufferRef.current = entry.buffer;
-          sampleRateRef.current = entry.buffer.sampleRate;
-          durationRef.current = entry.buffer.duration;
-          setAudioBuffer(entry.buffer);
-          setDuration(entry.buffer.duration);
-          setPeaks(entry.peaks);
+          applyDecodedEntryMeta(entry);
           if (workletNodeRef.current && loadedWorkletIdRef.current !== targetTrackId) {
-            const ch0Copy = entry.ch0.slice();
-            const ch1Copy = entry.ch1 ? entry.ch1.slice() : null;
-            const transfer: Transferable[] = ch1Copy
-              ? [ch0Copy.buffer, ch1Copy.buffer]
-              : [ch0Copy.buffer];
             const initPos =
               typeof startAtSec === 'number'
                 ? Math.max(0, Math.min(entry.buffer.duration, startAtSec))
                 : Math.min(presetRef.current.lastPosition || 0, Math.max(0, entry.buffer.duration - 0.1));
             currentTimeRef.current = initPos;
-            workletNodeRef.current.port.postMessage(
-              {
-                type: 'load',
-                id: targetTrackId,
-                ch0: ch0Copy,
-                ch1: ch1Copy,
-                sampleRate: entry.buffer.sampleRate,
-                startSample: Math.round(initPos * entry.buffer.sampleRate),
-              },
-              transfer
-            );
-            loadedWorkletIdRef.current = targetTrackId;
+            postLoadToWorklet(targetTrackId, entry, Math.round(initPos * entry.buffer.sampleRate));
           }
         }
 
@@ -974,13 +1003,19 @@ export function usePracticeAudio({
 
         isPlayingRef.current = true;
         setIsPlaying(true);
-      } catch (err) {
-        console.error('Failed to start audio playback:', err);
+      } catch {
         isPlayingRef.current = false;
         setIsPlaying(false);
       }
     },
-    [ensureAudioGraph, getOrDecodeTrack, startFallbackNode, syncWorkletParams]
+    [
+      applyDecodedEntryMeta,
+      ensureAudioGraph,
+      getOrDecodeTrack,
+      postLoadToWorklet,
+      startFallbackNode,
+      syncWorkletParams,
+    ]
   );
 
   const pause = useCallback(() => {
@@ -1059,9 +1094,20 @@ export function usePracticeAudio({
     return () => cancelAnimationFrame(rafId);
   }, [isPlaying]);
 
+  // Keep stage screen awake during active live playback
+  useEffect(() => {
+    setPlaybackKeepScreenOn(isPlaying);
+    return () => {
+      if (isPlaying) {
+        setPlaybackKeepScreenOn(false);
+      }
+    };
+  }, [isPlaying]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      setPlaybackKeepScreenOn(false);
       stopFallbackSource();
       decodedCacheRef.current.clear();
       inflightDecodeRef.current.clear();

@@ -291,7 +291,8 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
           setErrorMessage(t.uploadModal.rootSecurityError);
           onRequestOpen?.();
         } else {
-          console.warn('Could not read directory handle:', err);
+          setErrorMessage(t.uploadModal.uploadEmptyError);
+          onRequestOpen?.();
         }
       } finally {
         setIsScanningFolder(false);
@@ -390,8 +391,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
             } else {
               onImportEmpty?.(t.uploadModal.uploadEmptyError);
             }
-          } catch (err) {
-            console.warn('Failed to import picked files:', err);
+          } catch {
             onImportEmpty?.(t.uploadModal.uploadEmptyError);
           }
           return;
@@ -458,7 +458,6 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
         if (errName === 'SecurityError' || errName === 'NotAllowedError') {
           setErrorMessage(t.uploadModal.rootSecurityError);
         } else {
-          console.warn('Could not scan subfolders:', err);
           setErrorMessage(t.uploadModal.uploadEmptyError);
         }
       } finally {
@@ -517,8 +516,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
       await new Promise<void>((r) => window.setTimeout(r, 0));
       try {
         await onImportFilesRef.current(chosen);
-      } catch (err) {
-        console.warn('Failed to import selected tracks:', err);
+      } catch {
         onImportEmpty?.(t.uploadModal.uploadEmptyError);
       }
     };
@@ -549,8 +547,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
               } else {
                 onImportEmpty?.(t.uploadModal.uploadEmptyError);
               }
-            } catch (err) {
-              console.warn('Failed to process selected files:', err);
+            } catch {
               onImportEmpty?.(t.uploadModal.uploadEmptyError);
             } finally {
               inputEl.value = '';
@@ -561,8 +558,7 @@ export const UploadTracksModal = memo(forwardRef<UploadTracksModalHandle, Upload
           ref={folderInputRef}
           type="file"
           multiple
-          // @ts-expect-error webkitdirectory is supported on Chromium/WebKit browsers
-          webkitdirectory=""
+          {...({ webkitdirectory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
           tabIndex={-1}
           aria-hidden="true"
           className="fixed -left-[9999px] top-0 w-px h-px opacity-0 pointer-events-none"

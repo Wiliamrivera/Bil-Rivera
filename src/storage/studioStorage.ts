@@ -1,11 +1,22 @@
 import { PracticeTrack, Setlist, StudioSettings } from '../types/studio';
 
-const DB_NAME = 'riffForgeAudioDB';
+const DB_NAME = 'riveraVSAudioDB';
+const LEGACY_DB_NAME = 'riffForgeAudioDB';
 const DB_VERSION = 2;
 const STORE_AUDIO = 'audioFiles';
 const STORE_META = 'meta';
+const DB_MIGRATED_FLAG = 'rivera_vs_db_migrated_v1';
 
 const KEYS = {
+  tracks: 'rivera_vs_tracks_v1',
+  setlists: 'rivera_vs_setlists_v1',
+  settings: 'rivera_vs_settings_v1',
+  activeTrackId: 'rivera_vs_active_track_v1',
+  activeSetlistId: 'rivera_vs_active_setlist_v1',
+  lastFolderName: 'rivera_vs_last_folder_v1',
+};
+
+const LEGACY_KEYS = {
   tracks: 'riffforge_tracks_v1',
   setlists: 'riffforge_setlists_v1',
   settings: 'riffforge_settings_v1',
@@ -43,7 +54,142 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   followPlayhead: true,
 };
 
+function readStorageWithLegacyMigration(newKey: string, legacyKey: string): string | null {
+  try {
+    const current = localStorage.getItem(newKey);
+    if (current !== null) return current;
+    const legacy = localStorage.getItem(legacyKey);
+    if (legacy !== null) {
+      try {
+        localStorage.setItem(newKey, legacy);
+      } catch {
+        // ignore quota errors during migration
+      }
+      return legacy;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null;
+let dbMigrationPromise: Promise<void> | null = null;
+
+async function hasLegacyAudioDatabase(): Promise<boolean> {
+  try {
+    if (localStorage.getItem(DB_MIGRATED_FLAG) === '1') return false;
+  } catch {
+    return false;
+  }
+
+  try {
+    if (typeof indexedDB.databases === 'function') {
+      const list = await indexedDB.databases();
+      return list.some((entry) => entry.name === LEGACY_DB_NAME);
+    }
+    return localStorage.getItem(LEGACY_KEYS.tracks) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function readAllStoreEntries(
+  db: IDBDatabase,
+  storeName: string
+): Promise<Array<{ key: IDBValidKey; value: unknown }>> {
+  return new Promise((resolve) => {
+    if (!db.objectStoreNames.contains(storeName)) {
+      resolve([]);
+      return;
+    }
+    try {
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      const entries: Array<{ key: IDBValidKey; value: unknown }> = [];
+      const cursorReq = store.openCursor();
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (cursor) {
+          entries.push({ key: cursor.key, value: cursor.value });
+          cursor.continue();
+        } else {
+          resolve(entries);
+        }
+      };
+      cursorReq.onerror = () => resolve(entries);
+      tx.onabort = () => resolve(entries);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+async function migrateLegacyAudioDBIfNeeded(targetDb: IDBDatabase): Promise<void> {
+  if (dbMigrationPromise) return dbMigrationPromise;
+  dbMigrationPromise = (async () => {
+    try {
+      const shouldMigrate = await hasLegacyAudioDatabase();
+      if (!shouldMigrate) {
+        try {
+          localStorage.setItem(DB_MIGRATED_FLAG, '1');
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      const legacyDb = await new Promise<IDBDatabase | null>((resolve) => {
+        try {
+          const req = indexedDB.open(LEGACY_DB_NAME);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+          req.onblocked = () => resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+
+      if (!legacyDb) return;
+
+      try {
+        const [audioEntries, metaEntries] = await Promise.all([
+          readAllStoreEntries(legacyDb, STORE_AUDIO),
+          readAllStoreEntries(legacyDb, STORE_META),
+        ]);
+
+        if (audioEntries.length > 0 || metaEntries.length > 0) {
+          await new Promise<void>((resolve) => {
+            const storeNames = [STORE_AUDIO, STORE_META];
+            const tx = targetDb.transaction(storeNames, 'readwrite');
+            const audioStore = tx.objectStore(STORE_AUDIO);
+            const metaStore = tx.objectStore(STORE_META);
+            for (const item of audioEntries) {
+              audioStore.put(item.value, item.key);
+            }
+            for (const item of metaEntries) {
+              metaStore.put(item.value, item.key);
+            }
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+            tx.onabort = () => resolve();
+          });
+        }
+
+        try {
+          localStorage.setItem(DB_MIGRATED_FLAG, '1');
+        } catch {
+          // ignore
+        }
+      } finally {
+        legacyDb.close();
+      }
+    } catch {
+      // keep app responsive even if migration fails
+    }
+  })();
+  return dbMigrationPromise;
+}
 
 function openAudioDB(): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') {
@@ -61,7 +207,7 @@ function openAudioDB(): Promise<IDBDatabase> {
         db.createObjectStore(STORE_META);
       }
     };
-    req.onsuccess = () => {
+    req.onsuccess = async () => {
       const db = req.result;
       db.onclose = () => {
         dbPromise = null;
@@ -70,6 +216,7 @@ function openAudioDB(): Promise<IDBDatabase> {
         db.close();
         dbPromise = null;
       };
+      await migrateLegacyAudioDBIfNeeded(db);
       resolve(db);
     };
     req.onerror = () => {
@@ -136,7 +283,7 @@ export async function deleteAudioBlobFromDB(trackId: string): Promise<void> {
 
 export function loadSavedTracks(): PracticeTrack[] | null {
   try {
-    const raw = localStorage.getItem(KEYS.tracks);
+    const raw = readStorageWithLegacyMigration(KEYS.tracks, LEGACY_KEYS.tracks);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
@@ -155,7 +302,7 @@ export function saveTracks(tracks: PracticeTrack[]): void {
 
 export function loadSavedSetlists(): Setlist[] | null {
   try {
-    const raw = localStorage.getItem(KEYS.setlists);
+    const raw = readStorageWithLegacyMigration(KEYS.setlists, LEGACY_KEYS.setlists);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : null;
@@ -174,7 +321,7 @@ export function saveSetlists(setlists: Setlist[]): void {
 
 export function loadSettings(): StudioSettings {
   try {
-    const raw = localStorage.getItem(KEYS.settings);
+    const raw = readStorageWithLegacyMigration(KEYS.settings, LEGACY_KEYS.settings);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<StudioSettings>;
     const merged: StudioSettings = { ...DEFAULT_SETTINGS, ...parsed };
@@ -204,8 +351,8 @@ export function saveSettings(settings: StudioSettings): void {
 export function loadActiveIds(): { trackId: string | null; setlistId: string | null } {
   try {
     return {
-      trackId: localStorage.getItem(KEYS.activeTrackId),
-      setlistId: localStorage.getItem(KEYS.activeSetlistId),
+      trackId: readStorageWithLegacyMigration(KEYS.activeTrackId, LEGACY_KEYS.activeTrackId),
+      setlistId: readStorageWithLegacyMigration(KEYS.activeSetlistId, LEGACY_KEYS.activeSetlistId),
     };
   } catch {
     return {
@@ -226,7 +373,7 @@ export function saveActiveIds(trackId: string, setlistId: string): void {
 
 export function loadLastFolderName(): string {
   try {
-    return localStorage.getItem(KEYS.lastFolderName) || '';
+    return readStorageWithLegacyMigration(KEYS.lastFolderName, LEGACY_KEYS.lastFolderName) || '';
   } catch {
     return '';
   }

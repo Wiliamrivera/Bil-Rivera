@@ -143,6 +143,7 @@ export const PWAUpdateButton: React.FC<PWAUpdateButtonProps> = React.memo(({ t }
       window.clearTimeout(statusTimerRef.current);
       statusTimerRef.current = null;
     }
+    setStatusMsg('');
     if (needRefresh) {
       await applyUpdate();
       return;
@@ -150,10 +151,8 @@ export const PWAUpdateButton: React.FC<PWAUpdateButtonProps> = React.memo(({ t }
     const res = await checkForUpdate();
     if (res === 'ready') {
       await applyUpdate();
-    } else if (res === 'offline') {
-      setStatusMsg(t.pwa.updateOffline);
     } else {
-      setStatusMsg(t.pwa.updateLatest);
+      setStatusMsg(res === 'offline' ? t.pwa.updateOffline : t.pwa.updateLatest);
       statusTimerRef.current = window.setTimeout(() => {
         setStatusMsg('');
         statusTimerRef.current = null;

@@ -1,7 +1,7 @@
-export const PITCH_WORKLET_NAME = 'riff-pitch-shifter';
+export const PITCH_WORKLET_NAME = 'rivera-vs-pitch-shifter';
 
 export const PITCH_WORKLET_CODE = `
-class RiffPitchShifterProcessor extends AudioWorkletProcessor {
+class RiveraPitchShifterProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.activeId = '';
@@ -607,7 +607,7 @@ class RiffPitchShifterProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('${PITCH_WORKLET_NAME}', RiffPitchShifterProcessor);
+registerProcessor('${PITCH_WORKLET_NAME}', RiveraPitchShifterProcessor);
 `;
 
 export function createPitchWorkletBlobUrl(): string {
@@ -725,25 +725,19 @@ export function detectBpmAndOffset(buffer: AudioBuffer): { bpm: number; beatOffs
   };
 }
 
-/**
- * Encode an AudioBuffer into a 16-bit PCM WAV Blob.
- */
-export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
-  const numChannels = Math.min(2, buffer.numberOfChannels);
-  const sampleRate = buffer.sampleRate;
-  const numFrames = buffer.length;
-  const bytesPerSample = 2;
-  const blockAlign = numChannels * bytesPerSample;
-  const dataSize = numFrames * blockAlign;
-  const arrayBuffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(arrayBuffer);
-
+function writeWavHeader(
+  view: DataView,
+  numChannels: number,
+  sampleRate: number,
+  dataSize: number
+): void {
   const writeStr = (offset: number, str: string) => {
     for (let i = 0; i < str.length; i++) {
       view.setUint8(offset + i, str.charCodeAt(i));
     }
   };
 
+  const blockAlign = numChannels * 2;
   writeStr(0, 'RIFF');
   view.setUint32(4, 36 + dataSize, true);
   writeStr(8, 'WAVE');
@@ -757,6 +751,116 @@ export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
   view.setUint16(34, 16, true);
   writeStr(36, 'data');
   view.setUint32(40, dataSize, true);
+}
+
+function softLimitSample(s: number): number {
+  if (!Number.isFinite(s)) return 0;
+  if (s > 0.985) return 0.985 + Math.tanh((s - 0.985) / 0.014) * 0.014;
+  if (s < -0.985) return -0.985 + Math.tanh((s + 0.985) / 0.014) * 0.014;
+  return s;
+}
+
+function cubicReadAt(buf: Float32Array, srcLen: number, pos: number): number {
+  if (srcLen <= 0) return 0;
+  if (pos <= 0) return buf[0];
+  if (pos >= srcLen - 1) return buf[srcLen - 1];
+  const i1 = Math.floor(pos);
+  const t = pos - i1;
+  if (t < 1e-5) return buf[i1];
+  const i0 = i1 > 0 ? i1 - 1 : 0;
+  const i2 = i1 + 1 < srcLen ? i1 + 1 : srcLen - 1;
+  const i3 = i1 + 2 < srcLen ? i1 + 2 : srcLen - 1;
+  const y0 = buf[i0];
+  const y1 = buf[i1];
+  const y2 = buf[i2];
+  const y3 = buf[i3];
+  const c1 = 0.5 * (y2 - y0);
+  const c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+  const c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+  return ((c3 * t + c2) * t + c1) * t + y1;
+}
+
+function scoreWsolaCandidate(
+  ch0: Float32Array,
+  ch1: Float32Array,
+  srcLen: number,
+  candCenter: number,
+  oldPos: number,
+  pitchStep: number,
+  corrLen: number,
+  stride: number
+): number {
+  let dot = 0;
+  let normA = 1e-9;
+  let normB = 1e-9;
+  for (let k = 0; k < corrLen; k += stride) {
+    const idxA = Math.floor(oldPos + k * pitchStep);
+    const idxB = Math.floor(candCenter + k * pitchStep);
+    if (idxA < 0 || idxA >= srcLen || idxB < 0 || idxB >= srcLen) break;
+    const a0 = ch0[idxA];
+    const a1 = ch1[idxA];
+    const b0 = ch0[idxB];
+    const b1 = ch1[idxB];
+    dot += a0 * b0 + a1 * b1;
+    normA += a0 * a0 + a1 * a1;
+    normB += b0 * b0 + b1 * b1;
+  }
+  if (normA < 1e-6 && normB < 1e-6) return 0.99;
+  if (normA < 1e-7 || normB < 1e-7) return -1;
+  return dot / Math.sqrt(normA * normB);
+}
+
+function findBestWsolaAnchor(
+  ch0: Float32Array,
+  ch1: Float32Array,
+  srcLen: number,
+  targetCenter: number,
+  oldPos: number,
+  pitchStep: number,
+  overlapLen: number,
+  seekHalf: number,
+  corrLen: number
+): number {
+  const maxSafe = Math.max(0, srcLen - Math.ceil(overlapLen * pitchStep) - 4);
+  const minC = Math.max(0, Math.floor(targetCenter - seekHalf));
+  const maxC = Math.min(maxSafe, Math.floor(targetCenter + seekHalf));
+  if (maxC <= minC) return Math.max(0, Math.min(maxSafe, targetCenter));
+
+  let bestPos = Math.max(minC, Math.min(maxC, Math.round(targetCenter)));
+  let bestScore = -1e12;
+
+  for (let cand = minC; cand <= maxC; cand += 12) {
+    const s = scoreWsolaCandidate(ch0, ch1, srcLen, cand, oldPos, pitchStep, corrLen, 12);
+    if (s > bestScore) {
+      bestScore = s;
+      bestPos = cand;
+    }
+  }
+
+  const fMin = Math.max(minC, bestPos - 11);
+  const fMax = Math.min(maxC, bestPos + 11);
+  for (let cand = fMin; cand <= fMax; cand++) {
+    const s = scoreWsolaCandidate(ch0, ch1, srcLen, cand, oldPos, pitchStep, corrLen, 6);
+    if (s > bestScore) {
+      bestScore = s;
+      bestPos = cand;
+    }
+  }
+  return bestPos;
+}
+
+/**
+ * Encode an AudioBuffer into a 16-bit PCM WAV Blob.
+ */
+export function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const numChannels = Math.min(2, buffer.numberOfChannels);
+  const sampleRate = buffer.sampleRate;
+  const numFrames = buffer.length;
+  const dataSize = numFrames * numChannels * 2;
+  const arrayBuffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(arrayBuffer);
+
+  writeWavHeader(view, numChannels, sampleRate, dataSize);
 
   const ch0 = buffer.getChannelData(0);
   const ch1 = numChannels > 1 ? buffer.getChannelData(1) : ch0;
@@ -819,43 +923,18 @@ export async function exportTrackAudioToWav({
   const arrayBuffer = new ArrayBuffer(44 + maxFrames * blockAlign);
   const view = new DataView(arrayBuffer);
 
-  const writeStr = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  };
-
-  writeStr(0, 'RIFF');
-  view.setUint32(4, 36 + maxFrames * blockAlign, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sr, true);
-  view.setUint32(28, sr * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, 'data');
-  view.setUint32(40, maxFrames * blockAlign, true);
+  writeWavHeader(view, numChannels, sr, maxFrames * blockAlign);
 
   const yieldToMain = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 
   let writtenFrames = 0;
   let byteOffset = 44;
 
-  const softLimit = (s: number): number => {
-    if (!Number.isFinite(s)) return 0;
-    if (s > 0.985) return 0.985 + Math.tanh((s - 0.985) / 0.014) * 0.014;
-    if (s < -0.985) return -0.985 + Math.tanh((s + 0.985) / 0.014) * 0.014;
-    return s;
-  };
-
   const writeStereoFrame = (raw0: number, raw1: number) => {
     const scaledL = raw0 * volL;
     const scaledR = raw1 * volR;
-    const final0 = Math.max(-1, Math.min(1, softLimit(swapLR ? scaledR : scaledL)));
-    const final1 = Math.max(-1, Math.min(1, softLimit(swapLR ? scaledL : scaledR)));
+    const final0 = Math.max(-1, Math.min(1, softLimitSample(swapLR ? scaledR : scaledL)));
+    const final1 = Math.max(-1, Math.min(1, softLimitSample(swapLR ? scaledL : scaledR)));
     view.setInt16(byteOffset, final0 < 0 ? final0 * 0x8000 : final0 * 0x7fff, true);
     view.setInt16(byteOffset + 2, final1 < 0 ? final1 * 0x8000 : final1 * 0x7fff, true);
     byteOffset += 4;
@@ -877,76 +956,6 @@ export async function exportTrackAudioToWav({
     const seekHalf = 768;
     const corrLen = 1024;
 
-    const cubicRead = (buf: Float32Array, pos: number): number => {
-      if (srcLen <= 0) return 0;
-      if (pos <= 0) return buf[0];
-      if (pos >= srcLen - 1) return buf[srcLen - 1];
-      const i1 = Math.floor(pos);
-      const t = pos - i1;
-      if (t < 1e-5) return buf[i1];
-      const i0 = i1 > 0 ? i1 - 1 : 0;
-      const i2 = i1 + 1 < srcLen ? i1 + 1 : srcLen - 1;
-      const i3 = i1 + 2 < srcLen ? i1 + 2 : srcLen - 1;
-      const y0 = buf[i0];
-      const y1 = buf[i1];
-      const y2 = buf[i2];
-      const y3 = buf[i3];
-      const c1 = 0.5 * (y2 - y0);
-      const c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
-      const c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
-      return ((c3 * t + c2) * t + c1) * t + y1;
-    };
-
-    const scoreCand = (candCenter: number, oldPos: number, pitchStep: number, stride: number): number => {
-      let dot = 0;
-      let normA = 1e-9;
-      let normB = 1e-9;
-      for (let k = 0; k < corrLen; k += stride) {
-        const idxA = Math.floor(oldPos + k * pitchStep);
-        const idxB = Math.floor(candCenter + k * pitchStep);
-        if (idxA < 0 || idxA >= srcLen || idxB < 0 || idxB >= srcLen) break;
-        const a0 = ch0[idxA];
-        const a1 = ch1[idxA];
-        const b0 = ch0[idxB];
-        const b1 = ch1[idxB];
-        dot += a0 * b0 + a1 * b1;
-        normA += a0 * a0 + a1 * a1;
-        normB += b0 * b0 + b1 * b1;
-      }
-      if (normA < 1e-6 && normB < 1e-6) return 0.99;
-      if (normA < 1e-7 || normB < 1e-7) return -1;
-      return dot / Math.sqrt(normA * normB);
-    };
-
-    const findBestAnchor = (targetCenter: number, oldPos: number, pitchStep: number): number => {
-      const maxSafe = Math.max(0, srcLen - Math.ceil(overlapLen * pitchStep) - 4);
-      const minC = Math.max(0, Math.floor(targetCenter - seekHalf));
-      const maxC = Math.min(maxSafe, Math.floor(targetCenter + seekHalf));
-      if (maxC <= minC) return Math.max(0, Math.min(maxSafe, targetCenter));
-
-      let bestPos = Math.max(minC, Math.min(maxC, Math.round(targetCenter)));
-      let bestScore = -1e12;
-
-      for (let cand = minC; cand <= maxC; cand += 12) {
-        const s = scoreCand(cand, oldPos, pitchStep, 12);
-        if (s > bestScore) {
-          bestScore = s;
-          bestPos = cand;
-        }
-      }
-
-      const fMin = Math.max(minC, bestPos - 11);
-      const fMax = Math.min(maxC, bestPos + 11);
-      for (let cand = fMin; cand <= fMax; cand++) {
-        const s = scoreCand(cand, oldPos, pitchStep, 6);
-        if (s > bestScore) {
-          bestScore = s;
-          bestPos = cand;
-        }
-      }
-      return bestPos;
-    };
-
     let playPos = 0;
     let readPos = 0;
     let oldReadPos = 0;
@@ -962,7 +971,17 @@ export async function exportTrackAudioToWav({
         if (Math.abs(readPos - playPos) >= 48) {
           oldReadPos = readPos;
           xfadePitchStep = pitchRatio;
-          readPos = findBestAnchor(playPos, oldReadPos, pitchRatio);
+          readPos = findBestWsolaAnchor(
+            ch0,
+            ch1,
+            srcLen,
+            playPos,
+            oldReadPos,
+            pitchRatio,
+            overlapLen,
+            seekHalf,
+            corrLen
+          );
           xfadePos = 0;
         }
       }
@@ -974,19 +993,19 @@ export async function exportTrackAudioToWav({
         s0 = ch0[idx];
         s1 = ch1[idx];
       } else {
-        s0 = cubicRead(ch0, readPos);
-        s1 = cubicRead(ch1, readPos);
+        s0 = cubicReadAt(ch0, srcLen, readPos);
+        s1 = cubicReadAt(ch1, srcLen, readPos);
       }
 
       if (xfadePos >= 0) {
         const old0 =
           isExactPitch && Math.abs(oldReadPos - Math.round(oldReadPos)) < 1e-4
             ? ch0[Math.min(srcLen - 1, Math.max(0, Math.round(oldReadPos)))]
-            : cubicRead(ch0, oldReadPos);
+            : cubicReadAt(ch0, srcLen, oldReadPos);
         const old1 =
           isExactPitch && Math.abs(oldReadPos - Math.round(oldReadPos)) < 1e-4
             ? ch1[Math.min(srcLen - 1, Math.max(0, Math.round(oldReadPos)))]
-            : cubicRead(ch1, oldReadPos);
+            : cubicReadAt(ch1, srcLen, oldReadPos);
 
         const phase = xfadePos / xfadeTotal;
         const wIn = 0.5 * (1 - Math.cos(Math.PI * phase));

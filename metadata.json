@@ -1,6 +1,6 @@
 {
-  "name": "RiffForge",
-  "description": "Estúdio prático de prática musical com loop A-B na batida, controle independente de velocidade e afinação, marcadores de seção e letras sincronizadas.",
+  "name": "Rivera V/S Player",
+  "description": "Estúdio prático para shows ao vivo e ensaios com controle de Pitch, BPM e volumes L/R independentes.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

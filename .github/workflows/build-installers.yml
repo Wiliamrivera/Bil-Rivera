@@ -2,6 +2,11 @@ name: Build Multiplatform Offline Installers
 
 on:
   workflow_dispatch:
+    inputs:
+      android_version_code:
+        description: 'Version Code numerico para Play Store (deixe vazio para usar o numero da execucao)'
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
@@ -33,13 +38,14 @@ jobs:
             gradle-android-
       - name: Install dependencies and configure Capacitor Android
         env:
-          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_VERSION_CODE: ${{ inputs.android_version_code || github.run_number }}
         run: |
           npm install --legacy-peer-deps
           npm install --legacy-peer-deps --no-save @capacitor/core @capacitor/cli @capacitor/android
           npm run build
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
+          python3 -c "import PIL" 2>/dev/null || python3 -m pip install --quiet pillow || true
           node scripts/patch-android-gradle.mjs
       - name: Build and sign Android APK and Play Store AAB
         env:

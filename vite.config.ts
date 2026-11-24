@@ -117,6 +117,7 @@ export default defineConfig(() => {
         input: {
           main: path.resolve(import.meta.dirname, 'index.html'),
           site: path.resolve(import.meta.dirname, 'site.html'),
+          privacy: path.resolve(import.meta.dirname, 'privacy.html'),
         },
         output: {
           codeSplitting: {

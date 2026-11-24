@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { registerSW } from 'virtual:pwa-register';
+import { resolveAppDistributionLinks } from '../utils/appDistribution';
 import { isAndroidDevice, isIOSOrIPadOS, isRunningInsideNativeShell } from '../utils/platform';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -8,8 +9,10 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 // Shared Service Worker update state across the app
+let swInitialized = false;
 let swRegistration: ServiceWorkerRegistration | null = null;
 let triggerSWUpdate: ((reloadPage?: boolean) => Promise<void>) | null = null;
+let swPollIntervalId: number | null = null;
 let swNeedRefresh = false;
 let controllerChanged = false;
 const listeners = new Set<() => void>();
@@ -19,7 +22,8 @@ function notifyListeners() {
 }
 
 export function initAppServiceWorker() {
-  if (typeof window === 'undefined' || triggerSWUpdate || isRunningInsideNativeShell()) return;
+  if (typeof window === 'undefined' || swInitialized || isRunningInsideNativeShell()) return;
+  swInitialized = true;
   try {
     const hadController = Boolean(navigator.serviceWorker?.controller);
     let sawInitialClaim = false;
@@ -69,21 +73,22 @@ export function initAppServiceWorker() {
         notifyListeners();
       },
       onRegisteredSW(_swUrl, reg) {
-        if (reg) {
-          swRegistration = reg;
-          lastUpdateCheckAt = Date.now();
-          window.setTimeout(() => {
-            if (typeof navigator !== 'undefined' && navigator.onLine) {
-              reg.update().catch(() => {});
-            }
-          }, 1800);
-          // Check periodically in background only when online
-          window.setInterval(() => {
-            if (typeof navigator !== 'undefined' && navigator.onLine) {
-              reg.update().catch(() => {});
-            }
-          }, 5 * 60 * 1000);
+        if (!reg) return;
+        swRegistration = reg;
+        lastUpdateCheckAt = Date.now();
+        window.setTimeout(() => {
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            reg.update().catch(() => {});
+          }
+        }, 1800);
+        if (swPollIntervalId !== null) {
+          window.clearInterval(swPollIntervalId);
         }
+        swPollIntervalId = window.setInterval(() => {
+          if (typeof navigator !== 'undefined' && navigator.onLine) {
+            reg.update().catch(() => {});
+          }
+        }, 5 * 60 * 1000);
       },
     });
   } catch {
@@ -235,15 +240,8 @@ export function isAndroidInAppBrowserUA(): boolean {
 }
 
 export function getDirectAppInstallerUrl(): string {
-  if (typeof window === 'undefined' || isRunningInsideNativeShell()) return '';
-  const { protocol, origin } = window.location;
-  if (protocol !== 'http:' && protocol !== 'https:') return '';
-  const publicOrigin = origin.startsWith('https://ais-dev-')
-    ? origin.replace('https://ais-dev-', 'https://ais-pre-')
-    : origin;
-
-  // Direct installer link: opens the 1-tap Android installer automatically on mobile (ignored cleanly on desktop)
-  return `${publicOrigin}/?install=1`;
+  if (typeof window === 'undefined') return '';
+  return resolveAppDistributionLinks().androidInstallUrl;
 }
 
 export function getAndroidChromeIntentUrl(targetUrl: string): string {

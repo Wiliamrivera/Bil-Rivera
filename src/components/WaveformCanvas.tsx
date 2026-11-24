@@ -172,6 +172,37 @@ const WAVEFORM_COLORS: Record<AppColorPalette, { dark: WaveformColorScheme; ligh
   },
 };
 
+function drawLoopMarkerFlag(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  width: number,
+  headerH: number,
+  waveBottom: number,
+  loopEnabled: boolean,
+  colors: WaveformColorScheme,
+  label: 'A' | 'B'
+): void {
+  if (x < -12 || x > width + 12) return;
+  const activeColor = loopEnabled ? colors.markerActive : '#64748B';
+
+  ctx.strokeStyle = activeColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, headerH);
+  ctx.lineTo(x, waveBottom);
+  ctx.stroke();
+
+  const flagW = 18;
+  const flagH = 16;
+  const fx = label === 'A' ? x : x - flagW;
+  ctx.fillStyle = activeColor;
+  ctx.fillRect(fx, headerH, flagW, flagH);
+  ctx.fillStyle = loopEnabled ? colors.markerText : '#FFFFFF';
+  ctx.font = '700 10px "JetBrains Mono", monospace';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, fx + 5, headerH + flagH / 2 + 0.5);
+}
+
 export const WaveformCanvas: React.FC<WaveformCanvasProps> = React.memo(({
   peaks,
   duration,
@@ -477,33 +508,30 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = React.memo(({
       }
 
       // Draw Loop A & Loop B Markers
-      const drawLoopMarker = (t: number | null, label: 'A' | 'B') => {
-        if (t === null) return;
-        const x = timeToX(t, width);
-        if (x < -12 || x > width + 12) return;
-        const activeColor = loopEnabled ? colors.markerActive : '#64748B';
-
-        ctx.strokeStyle = activeColor;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, headerH);
-        ctx.lineTo(x, waveBottom);
-        ctx.stroke();
-
-        // Flag badge
-        const flagW = 18;
-        const flagH = 16;
-        const fx = label === 'A' ? x : x - flagW;
-        ctx.fillStyle = activeColor;
-        ctx.fillRect(fx, headerH, flagW, flagH);
-        ctx.fillStyle = loopEnabled ? colors.markerText : '#FFFFFF';
-        ctx.font = '700 10px "JetBrains Mono", monospace';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, fx + 5, headerH + flagH / 2 + 0.5);
-      };
-
-      drawLoopMarker(loopA, 'A');
-      drawLoopMarker(loopB, 'B');
+      if (loopA !== null) {
+        drawLoopMarkerFlag(
+          ctx,
+          timeToX(loopA, width),
+          width,
+          headerH,
+          waveBottom,
+          loopEnabled,
+          colors,
+          'A'
+        );
+      }
+      if (loopB !== null) {
+        drawLoopMarkerFlag(
+          ctx,
+          timeToX(loopB, width),
+          width,
+          headerH,
+          waveBottom,
+          loopEnabled,
+          colors,
+          'B'
+        );
+      }
 
       // Draw Hover / Touch-Preview Hairline
       if (hoverTime !== null && (dragTarget === null || touchScrubActive)) {
@@ -578,6 +606,10 @@ export const WaveformCanvas: React.FC<WaveformCanvasProps> = React.memo(({
       setCanvasSize((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
     };
     updateSize();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateSize);
+      return () => window.removeEventListener('resize', updateSize);
+    }
     const obs = new ResizeObserver(updateSize);
     obs.observe(container);
     return () => obs.disconnect();

@@ -10,6 +10,8 @@ const config = {
   android: {
     backgroundColor: '#000000',
     allowMixedContent: false,
+    captureInput: true,
+    webContentsDebuggingEnabled: false,
   },
 };
 

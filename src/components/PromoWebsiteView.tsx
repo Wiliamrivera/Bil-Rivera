@@ -25,6 +25,14 @@ import featureRehearsalImg from '../assets/images/feature_band_rehearsal_1795376
 import featureDevicesImg from '../assets/images/feature_multiplatform_devices_1795376954317.jpg';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { APP_VERSION } from '../storage/studioStorage';
+import {
+  isAiStudioUrl,
+  loadSavedDistributionUrl,
+  normalizeExternalUrl,
+  resolveAppDistributionLinks,
+  saveDistributionUrl,
+} from '../utils/appDistribution';
+import { copyTextReliable } from '../utils/clipboard';
 import { createAudioContextSafe, resumeAudioContextSafe } from '../utils/platform';
 
 export type PromoPlatformId = 'android' | 'windows' | 'macos' | 'web';
@@ -33,54 +41,6 @@ interface PromoWebsiteViewProps {
   language?: 'pt' | 'en';
   onOpenPlayer: () => void;
   onChangeLanguage?: (lang: 'pt' | 'en') => void;
-}
-
-const RELEASES_STORAGE_KEY = 'rivera_promo_releases_url_v1';
-
-async function copyShareText(text: string): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fallback for restricted iframe contexts
-    }
-  }
-  if (typeof document !== 'undefined') {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function getPromoShareUrl(): string {
-  if (typeof window === 'undefined') return '';
-  const { protocol, origin } = window.location;
-  if (protocol !== 'http:' && protocol !== 'https:') return '';
-  const publicOrigin = origin.startsWith('https://ais-dev-')
-    ? origin.replace('https://ais-dev-', 'https://ais-pre-')
-    : origin;
-  return `${publicOrigin}/site.html`;
-}
-
-function normalizeReleasesUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
 }
 
 export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
@@ -109,17 +69,10 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
   const simParamsRef = useRef({ simPitch, simSpeedPct, simVolL, simVolR, simSwapLR });
   simParamsRef.current = { simPitch, simSpeedPct, simVolL, simVolR, simSwapLR };
 
-  // Releases URL configuration (optional real GitHub Releases link)
-  const envReleasesUrl = (import.meta.env.VITE_GITHUB_RELEASES_URL as string | undefined) || '';
-  const [releasesUrl, setReleasesUrl] = useState<string>(() => {
-    if (envReleasesUrl) return envReleasesUrl;
-    try {
-      return localStorage.getItem(RELEASES_STORAGE_KEY) || '';
-    } catch {
-      return '';
-    }
-  });
+  // Releases / APK distribution URL synced with app settings
+  const [releasesUrl, setReleasesUrl] = useState<string>(() => loadSavedDistributionUrl());
   const [releasesInput, setReleasesInput] = useState(releasesUrl);
+  const [releasesError, setReleasesError] = useState<string | null>(null);
   const [showReleasesConfig, setShowReleasesConfig] = useState(false);
   const [copiedPromoLink, setCopiedPromoLink] = useState(false);
   const [installNotice, setInstallNotice] = useState<string | null>(null);
@@ -137,12 +90,22 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
     message: string;
   } | null>(null);
   const [copiedInquiry, setCopiedInquiry] = useState(false);
+  const copiedPromoTimerRef = useRef<number | null>(null);
+  const copiedInquiryTimerRef = useRef<number | null>(null);
 
-  const shareUrl = useMemo(() => getPromoShareUrl(), []);
+  const distributionLinks = useMemo(
+    () => resolveAppDistributionLinks(releasesUrl),
+    [releasesUrl]
+  );
+  const shareUrl = distributionLinks.promoSiteUrl;
+  const activePlatformDownloadUrl =
+    selectedPlatform === 'android'
+      ? distributionLinks.androidInstallUrl || distributionLinks.releasesPageUrl
+      : distributionLinks.releasesPageUrl;
 
   const stopSimulatorAudio = useCallback(() => {
     if (simTimerRef.current !== null) {
-      window.clearInterval(simTimerRef.current);
+      window.clearTimeout(simTimerRef.current);
       simTimerRef.current = null;
     }
     if (simCtxRef.current) {
@@ -155,6 +118,14 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
   useEffect(() => {
     return () => {
       stopSimulatorAudio();
+      if (copiedPromoTimerRef.current !== null) {
+        window.clearTimeout(copiedPromoTimerRef.current);
+        copiedPromoTimerRef.current = null;
+      }
+      if (copiedInquiryTimerRef.current !== null) {
+        window.clearTimeout(copiedInquiryTimerRef.current);
+        copiedInquiryTimerRef.current = null;
+      }
     };
   }, [stopSimulatorAudio]);
 
@@ -246,25 +217,46 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
 
   const handleCopyPromoUrl = async () => {
     if (!shareUrl) return;
-    await copyShareText(shareUrl);
+    await copyTextReliable(shareUrl);
+    if (copiedPromoTimerRef.current !== null) {
+      window.clearTimeout(copiedPromoTimerRef.current);
+    }
     setCopiedPromoLink(true);
-    window.setTimeout(() => setCopiedPromoLink(false), 3200);
+    copiedPromoTimerRef.current = window.setTimeout(() => {
+      setCopiedPromoLink(false);
+      copiedPromoTimerRef.current = null;
+    }, 3200);
   };
 
   const handleSaveReleasesUrl = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = normalizeReleasesUrl(releasesInput);
-    setReleasesUrl(clean);
-    setReleasesInput(clean);
-    try {
-      if (clean) {
-        localStorage.setItem(RELEASES_STORAGE_KEY, clean);
-      } else {
-        localStorage.removeItem(RELEASES_STORAGE_KEY);
-      }
-    } catch {
-      // ignore storage errors
+    setReleasesError(null);
+    const trimmed = releasesInput.trim();
+    if (!trimmed) {
+      saveDistributionUrl('');
+      setReleasesUrl('');
+      setReleasesInput('');
+      setShowReleasesConfig(false);
+      return;
     }
+    if (isAiStudioUrl(trimmed)) {
+      setReleasesError(
+        isPt
+          ? 'Esse link é do AI Studio. Informe seu GitHub Releases, link .apk ou domínio publicado.'
+          : 'That is an AI Studio URL. Enter your GitHub Releases, .apk, or published domain.'
+      );
+      return;
+    }
+    const clean = normalizeExternalUrl(trimmed);
+    if (!clean) {
+      setReleasesError(
+        isPt ? 'Informe uma URL válida começando com https://.' : 'Enter a valid https:// URL.'
+      );
+      return;
+    }
+    const saved = saveDistributionUrl(clean);
+    setReleasesUrl(saved.savedUrl);
+    setReleasesInput(saved.savedUrl);
     setShowReleasesConfig(false);
   };
 
@@ -336,9 +328,15 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
   const handleCopySubmittedSummary = async () => {
     if (!submittedInquiry) return;
     const summary = `Rivera V/S Player · Contato\nNome: ${submittedInquiry.name}\nE-mail: ${submittedInquiry.email}\nPlataforma: ${submittedInquiry.platform}\nMensagem: ${submittedInquiry.message}`;
-    await copyShareText(summary);
+    await copyTextReliable(summary);
+    if (copiedInquiryTimerRef.current !== null) {
+      window.clearTimeout(copiedInquiryTimerRef.current);
+    }
     setCopiedInquiry(true);
-    window.setTimeout(() => setCopiedInquiry(false), 3000);
+    copiedInquiryTimerRef.current = window.setTimeout(() => {
+      setCopiedInquiry(false);
+      copiedInquiryTimerRef.current = null;
+    }, 3000);
   };
 
   const scrollToSection = (id: string) => {
@@ -1188,9 +1186,9 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
                 </>
               ) : (
                 <>
-                  {releasesUrl ? (
+                  {activePlatformDownloadUrl ? (
                     <a
-                      href={releasesUrl}
+                      href={activePlatformDownloadUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="min-h-[46px] w-full px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0D0F12] text-sm font-bold flex items-center justify-center gap-2 transition-colors"
@@ -1221,7 +1219,7 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
 
                   <div className="pt-1 flex items-center justify-between gap-2 text-xs text-zinc-400">
                     <span>
-                      {releasesUrl
+                      {activePlatformDownloadUrl
                         ? isPt
                           ? 'Link oficial de downloads ativo.'
                           : 'Official releases link active.'
@@ -1231,14 +1229,17 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
                     </span>
                     <button
                       type="button"
-                      onClick={() => setShowReleasesConfig((v) => !v)}
+                      onClick={() => {
+                        setReleasesError(null);
+                        setShowReleasesConfig((v) => !v);
+                      }}
                       className="text-amber-400 hover:text-amber-300 font-semibold whitespace-nowrap cursor-pointer"
                     >
                       {showReleasesConfig
                         ? isPt
                           ? 'Fechar'
                           : 'Close'
-                        : releasesUrl
+                        : activePlatformDownloadUrl
                           ? isPt
                             ? 'Alterar link'
                             : 'Edit link'
@@ -1252,16 +1253,19 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
                     <form onSubmit={handleSaveReleasesUrl} className="pt-2 border-t border-zinc-800 flex flex-col gap-2">
                       <label htmlFor="releases-url-input" className="text-[11px] text-zinc-400">
                         {isPt
-                          ? 'Cole a URL das suas Releases (ex: https://github.com/usuario/repo/releases/latest):'
-                          : 'Paste your GitHub Releases URL:'}
+                          ? 'Cole a URL do GitHub / Releases (ex: https://github.com/usuario/repo) ou link direto do .apk:'
+                          : 'Paste your GitHub / Releases URL or direct .apk link:'}
                       </label>
                       <div className="flex gap-2">
                         <input
                           id="releases-url-input"
                           type="url"
                           value={releasesInput}
-                          onChange={(e) => setReleasesInput(e.target.value)}
-                          placeholder="https://github.com/.../releases/latest"
+                          onChange={(e) => {
+                            setReleasesInput(e.target.value);
+                            if (releasesError) setReleasesError(null);
+                          }}
+                          placeholder="https://github.com/usuario/repo"
                           className="flex-1 min-w-0 h-10 px-3 rounded-lg bg-[#12151C] border border-zinc-700 focus:border-amber-500 focus:outline-none text-xs text-zinc-100"
                         />
                         <button
@@ -1271,6 +1275,9 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
                           {isPt ? 'Salvar' : 'Save'}
                         </button>
                       </div>
+                      {releasesError && (
+                        <p className="text-xs text-rose-400">{releasesError}</p>
+                      )}
                     </form>
                   )}
                 </>
@@ -1488,6 +1495,14 @@ export const PromoWebsiteView: React.FC<PromoWebsiteViewProps> = ({
             >
               Downloads
             </button>
+            <a
+              href="/privacy.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-zinc-100 transition-colors"
+            >
+              {isPt ? 'Privacidade' : 'Privacy'}
+            </a>
             <button
               type="button"
               onClick={onOpenPlayer}

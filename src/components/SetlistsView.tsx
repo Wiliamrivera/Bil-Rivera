@@ -17,6 +17,7 @@ import {
 import { formatTimecode } from '../audio/audioUtils';
 import { TranslationDict } from '../i18n/translations';
 import { PracticeTrack, Setlist } from '../types/studio';
+import { areTracksAlphabetical } from '../utils/trackUtils';
 
 interface SetlistsViewProps {
   t: TranslationDict;
@@ -84,17 +85,10 @@ export const SetlistsView: React.FC<SetlistsViewProps> = React.memo(({
     return onPrefetchTracks(displayedTracks.slice(0, 10).map((tr) => tr.id));
   }, [displayedTracks, onPrefetchTracks]);
 
-  const isDisplayedAlphabetical =
-    displayedTracks.length <= 1 ||
-    displayedTracks.every((tr, idx) => {
-      if (idx === 0) return true;
-      return (
-        displayedTracks[idx - 1].title.localeCompare(tr.title, undefined, {
-          numeric: true,
-          sensitivity: 'base',
-        }) <= 0
-      );
-    });
+  const isDisplayedAlphabetical = useMemo(
+    () => areTracksAlphabetical(displayedTracks),
+    [displayedTracks]
+  );
 
   const canResetOpenedOrder = Boolean(
     openedSetlist?.previousTrackIds &&
